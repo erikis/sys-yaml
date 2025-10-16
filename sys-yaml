@@ -926,28 +926,28 @@ then
     Options:
       --help, -h                    show this help message and exit
       --verbose, -v                 enable verbose parser output of values being added
-      --jq, -q <jq>                 command to use for jq, false to disable, default detects jq
-      --root, -r <key>              set implicit key to the root, space-separated, default 'yaml'
-      --name, -n <key>              set initial key for writing, or : for full or ' ' for none
-      --in, -i <file>               set input file, by filename, or - for stdin, default -
-      --out, -o <file>              set output file, by filename, or - for stdout, default -
-      --plain, -l <file>            import plain-text data to the root from file, by filename
-      --binary, -x <file>           import binary data to the root from file, by filename
-      --compress, -g <gzip>         command for compressing binary data, or - for none, default -
-      --decompress, -m <gunzip>     command for decompress. binary data, or - for none, default -
+      --jq=, -q <jq>                command to use for jq, false to disable, default detects jq
+      --root=, -r <key>             set implicit key to the root, space-separated, default 'yaml'
+      --name=, -n <key>             set initial key for writing, or : for full or ' ' for none
+      --in=, -i <file>              set input file, by filename, or - for stdin, default -
+      --out=, -o <file>             set output file, by filename, or - for stdout, default -
+      --plain=, -l <file>           import plain-text data to the root from file, by filename
+      --binary=, -x <file>          import binary data to the root from file, by filename
+      --compress=, -g <gzip>        command for compressing binary data, or - for none, default -
+      --decompress=, -m <gunzip>    command for decompress. binary data, or - for none, default -
       --clear, -c                   remove all current values, restoring initial state
       --parse, -p                   parse one YAML document from input file
       --read, -b                    read values from input file, previously written using --write
       --write, -d                   write values to output file, using one key-value per line
       --write-keys, -k              write keys to output file, using one key per line
       --write-value, -w             write a raw value to output file, if the value exists
-      --write-line, -z <line>       write a raw line to output file
+      --write-line=, -z <line>      write a raw line to output file
       --write-conf, -f              write environment variables (Bash-compatible) to output file
       --write-json, -j              write JSON to output file
       --write-yaml, -y              write YAML to output file
       --subkeys, -s                 clear subkeys for where to base root, default same as --root
-      --subkeys-add, -a <key>       add raw, space-separated (possibly double-quoted) subkey(s)
-      --subkeys-encode, -e <key>    encode (i.e., double-quote if needed) and add subkey(s)
+      --subkeys-add=, -a <key>      add raw, space-separated (possibly double-quoted) subkey(s)
+      --subkeys-encode=, -e <key>   encode (i.e., double-quote if needed) and add subkey(s)
     EOF
   }
 
@@ -955,45 +955,46 @@ then
   command_name="$0"
   if [[ "$command_name" == "/"* ]]
   then command_name="$(basename "$command_name")"; fi
-  getopt_longoptions="help,verbose,jq:,root:,name:,in:,out:,plain:,binary:,compress:,decompress:"
-  getopt_longoptions="$getopt_longoptions,clear,parse,read"
-  getopt_longoptions="$getopt_longoptions,write,write-keys,write-value,write-line:"
-  getopt_longoptions="$getopt_longoptions,write-conf,write-json,write-yaml"
-  getopt_longoptions="$getopt_longoptions,subkeys,subkeys-add:,subkeys-encode:"
-  command_args="$(getopt \
-    --options "h,v,q:,r:,n:,i:,o:,l:,x:,g:,m:,c,p,b,d,k,w,z:,f,j,y,s,a:,e:" \
-    --longoptions "$getopt_longoptions" \
-    --name "$command_name" -- "$@")"
-  # Set $1 etc. to those provided by getopt so that lone -- ends option list
-  eval set -- "$command_args"
+  option_string="hvq:r:n:i:o:l:x:g:m:cpbdkwz:fjysa:e:-:"
   
   # Do a first round of checking command options
-  if [[ "$1" == '--' ]] # If no options,
-  then                  # print help to stderr
+  if [[ "$#" -eq 0 ]] # If no options,
+  then                 # print help to stderr
     print_usage >&2; print_help >&2; exit; fi # Not an error
-  while :
+  while getopts "$option_string" option_name "$@"
   do
-    case "$1" in
+    if [[ "$option_name" == '-' ]] # If a long option (short option name '-', i.e., --)
+    then                           # The long option name (and value) will be in OPTARG
+      # Parse the actual option name (before any =) and its value (after any =)
+      option_name="${OPTARG%%=*}"; option_value="${OPTARG#"$option_name"}"
+      option_value="${option_value#=}"; option_name="--$option_name" # Prepend -- to name
+    elif [[ "$option_name" != '?' ]] # ? = getopts illegal (unknown) option
+    then
+      option_value="$OPTARG"
+      option_name="-$option_name"; fi # Prepend - to short option name
+    case "$option_name" in
       -h|--help) print_usage; print_help; exit;;
-      -v|--verbose) sysyaml_param 'verbose' true; shift;;
-      -q|--jq) sysyaml_param 'jq' "$2"; shift 2;;
-      -r|-n|--root|--name) shift 2;;
-      -i|-o|-l|-x|--in|--out|--plain|--binary) shift 2;;
-      -g|-m|--compress|--decompress) shift 2;;
-      -c|--clear) shift;;
-      -p|-b|--parse|--read) shift;;
-      -d|-k|-w|--write|--write-keys|--write-value) shift;;
-      -z|--write-line) shift 2;;
-      -f|-j|-y|--write-conf|--write-json|--write-yaml) shift;;
-      -s|--subkeys) shift;;
-      -a|-e|--subkeys-add|--subkeys-encode) shift 2;;
-      --) shift; break;;
-      *) echo "Error: Option not implemented." >&2; exit 1;; esac; done
-  if [[ "$#" -gt 0 ]]
+      -v|--verbose) sysyaml_param 'verbose' true;;
+      -q|--jq) sysyaml_param 'jq' "$option_value";;
+      -r|-n|--root|--name);;
+      -i|-o|-l|-x|--in|--out|--plain|--binary);;
+      -g|-m|--compress|--decompress);;
+      -c|--clear);;
+      -p|-b|--parse|--read);;
+      -d|-k|-w|--write|--write-keys|--write-value);;
+      -z|--write-line);;
+      -f|-j|-y|--write-conf|--write-json|--write-yaml);;
+      -s|--subkeys);;
+      -a|-e|--subkeys-add|--subkeys-encode);;
+      \?) exit 1;; # getopts has already printed "illegal option"
+      *)
+        echo "Error: Invalid arguments. Unknown option." >&2
+        print_usage >&2; print_help >&2; exit 1;; esac; done
+  if [[ "$OPTIND" -le "$#" ]]
   then
-    echo "Error: Positional arguments are not supported. Use options." >&2
+    echo "Error: Invalid arguments. Use options, -o value, and --option=value." >&2
     print_usage >&2; print_help >&2; exit 1; fi
-  eval set -- "$command_args" # Reset $1 etc.
+  unset 'OPTIND' # Reset getopts
   
   # Intialize defaults
   sysyaml_init # In case e.g. --write-* needs encode without prior parsing
@@ -1010,26 +1011,32 @@ then
   in_doc=false
   # shellcheck disable=SC2034
   declare -a subkeys
-  # sysyaml_write_json and sysyaml_write_yaml require a subkeys array with at least one element.
-  # For sysyaml_write and sysyaml_write_conf it may also be empty or not provided.
+  # sysyaml_write_conf, sysyaml_write_json, and sysyaml_write_yaml require a
+  # subkeys array with at least one element
   sysyaml_subkeys 'subkeys' "$root_key"
   
   # Process command options
-  while :
+  while getopts "$option_string" option_name "$@"
   do
-    case "$1" in
-      -h|--help) shift;;
-      -v|--verbose) shift;;
-      -q|--jq) shift 2;;
+    if [[ "$option_name" == '-' ]] # If a long option (short option name '-', i.e., --)
+    then                           # The long option name (and value) will be in OPTARG
+      # Parse the actual option name (before any =) and its value (after any =)
+      option_name="${OPTARG%%=*}"; option_value="${OPTARG#"$option_name"}"
+      option_value="${option_value#=}"; option_name="--$option_name" # Prepend -- to name
+    elif [[ "$option_name" != '?' ]] # ? = getopts illegal (unknown) option
+    then
+      option_value="$OPTARG"
+      option_name="-$option_name"; fi # Prepend - to short option name
+    case "$option_name" in
       -r|--root)
-        root_key="${2:-"yaml"}"
+        root_key="${option_value:-"yaml"}"
         sysyaml_param 'root' "$root_key"
         sysyaml_subkeys_clear 'subkeys'
         sysyaml_subkeys 'subkeys' "$root_key"
-        shift 2;;
-      -n|--name) name_key="${2:-""}"; shift 2;;
+        ;;
+      -n|--name) name_key="${option_value:-""}";;
       -i|--in)
-        in_file="${2:-"-"}"
+        in_file="${option_value:-"-"}"
         exec 10<&-
         if [[ "$in_file" == '-' ]]
         then exec 10<&0
@@ -1037,35 +1044,38 @@ then
         in_lines=()
         # shellcheck disable=SC2034
         in_doc=false
-        shift 2;;
+        ;;
       -o|--out)
-        out_file="${2:-"-"}"
+        out_file="${option_value:-"-"}"
         exec 11>&-
         if [[ "$out_file" == '-' ]]
         then exec 11>&1
         else exec 11>"$out_file"; fi
-        shift 2;;
+        ;;
       -l|--plain)
-        #import_contents=$(< "$2") # Doesn't preserve trailing newlines
+        #import_contents=$(< "$option_value") # Doesn't preserve trailing newlines
         # Workaround to preserve trailing newlines
-        import_contents="$(cat "${2:-"-"}"; echo -n 'EOF')"
+        import_contents="$(cat "${option_value:-"-"}"; echo -n 'EOF')"
         import_contents="${import_contents%'EOF'}" # Preserve trailing newlines
         sysyaml_import "$root_key" 'import_contents'
         unset 'import_contents'
-        shift 2;;
+        ;;
       -x|--binary)
         if [[ "$compress_cmd" == '-' ]]
-        then import_contents="$(xxd -plain "${2:-"-"}"; echo -n 'EOF')"
-        elif [[ "${2:-"-"}" == '-' ]]
-        then import_contents="$("$compress_cmd" | xxd -plain '-'; echo -n 'EOF')"
-        else import_contents="$("$compress_cmd" < "$2" | xxd -plain '-'; echo -n 'EOF')"; fi
+        then import_contents="$(\
+          xxd -plain "${option_value:-"-"}"; echo -n 'EOF')"
+        elif [[ "${option_value:-"-"}" == '-' ]]
+        then import_contents="$("$compress_cmd" | \
+          xxd -plain '-'; echo -n 'EOF')"
+        else import_contents="$("$compress_cmd" < "$option_value" | \
+          xxd -plain '-'; echo -n 'EOF')"; fi
         import_contents="${import_contents%'EOF'}" # Preserve trailing newlines
         sysyaml_import "$root_key" 'import_contents' '!!binary'
         unset 'import_contents'
-        shift 2;;
-      -g|--compress) compress_cmd="${2:-"-"}"; shift 2;;
-      -m|--decompress) decompress_cmd="${2:-"-"}"; shift 2;;
-      -c|--clear) sysyaml_clear; shift;;
+        ;;
+      -g|--compress) compress_cmd="${option_value:-"-"}";;
+      -m|--decompress) decompress_cmd="${option_value:-"-"}";;
+      -c|--clear) sysyaml_clear;;
       -p|--parse)
         IFS='' # Otherwise line indentation won't be preserved
         # shellcheck disable=SC2034
@@ -1074,21 +1084,21 @@ then
         unset 'IFS'
         sysyaml_parse 'in_lines' "$root_key"
         in_lines=()
-        shift;;
+        ;;
       -b|--read)
         readarray -t in_lines <&10 # Read whole file as one document
         sysyaml_read 'in_lines'
         # shellcheck disable=SC2034
         in_lines=()
-        shift;;
-      -z|--write-line) echo "${2:-""}" >&11; shift 2;;
+        ;;
+      -z|--write-line) echo "${option_value:-""}" >&11; shift 2;;
       -w|--write-value)
         sysyaml_value 'subkeys' && sysyaml_write_value 'subkeys' "$decompress_cmd" >&11 \
           || echo "Warning: Value not found." >&2
-        shift;;
+        ;;
       -d|-k|-f|-j|-y|--write|--write-*)
         write_func=''
-        case "$1" in
+        case "$option_name" in
           --write|-d) write_func='sysyaml_write';;
           --write-keys|-k) write_func='sysyaml_write_keys';;
           --write-conf|-f) write_func='sysyaml_write_conf';;
@@ -1096,11 +1106,11 @@ then
           --write-yaml|-y) write_func='sysyaml_write_yaml';; esac
         "$write_func" 'subkeys' "$name_key" >&11 # Some have no 2nd arg., but then it's ignored
         #compgen -v >&2 # Uncomment to check that no unintended globals have leaked
-        shift;;
-      -s|--subkeys) sysyaml_subkeys_clear 'subkeys'; shift;;
-      -a|--subkeys-add) sysyaml_subkeys 'subkeys' "${2:-""}"; shift 2;;
-      -e|--subkeys-encode) sysyaml_subkeys_encode 'subkeys' "${2:-""}"; shift 2;;
-      --)
-        exec 10>&-
-        exec 11>&-
-        sysyaml_valid && exit 0 || exit 2;; esac; done; fi # Use exit code 2 if YAML was invalid
+        ;;
+      -s|--subkeys) sysyaml_subkeys_clear 'subkeys';;
+      -a|--subkeys-add) sysyaml_subkeys 'subkeys' "${option_value:-""}";;
+      -e|--subkeys-encode) sysyaml_subkeys_encode 'subkeys' "${option_value:-""}";;
+    esac; done
+  exec 10>&-
+  exec 11>&-
+  sysyaml_valid && exit 0 || exit 2; fi # Use exit code 2 if YAML was invalid

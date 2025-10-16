@@ -68,7 +68,7 @@ Provide your own YAML file called _test.yml_, e.g., the example above. Alternati
 This assumes that keys in the YAML are lower-case a-z, 0-9, _ with double-underscore being reserved. Also, recall that all string values in the YAML must be double-quoted.
 
 ```bash
-sys-yaml --in test.yml --parse --name my_config --write-conf
+sys-yaml --in=test.yml --parse --name=my_config --write-conf
 ```
 or
 ```bash
@@ -78,7 +78,7 @@ sys-yaml -i test.yml -pn my_config -f
 ### Convert YAML to JSON
 
 ```bash
-sys-yaml --in test.yml --parse --write-json
+sys-yaml --in=test.yml --parse --write-json
 ```
 or
 ```bash
@@ -90,7 +90,7 @@ sys-yaml -i test.yml -pj
 This assumes that there's a key called _my_mapping_.
 
 ```bash
-sys-yaml --in test.yml --parse --subkeys-add my_mapping --write-yaml
+sys-yaml --in=test.yml --parse --subkeys-add=my_mapping --write-yaml
 ```
 or
 ```bash
