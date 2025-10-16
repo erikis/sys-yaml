@@ -4,7 +4,7 @@ Limited [YAML](https://yaml.org/spec/1.2.2/) with [JSON](https://www.json.org/)-
 
 ## Features
 
-- **YAML: The Good Parts** -- all values must be valid JSON and string values are always double-quoted, while keys can be unquoted or double-quoted.
+- **YAML: The Good Parts** – all values must be valid JSON and string values are always double-quoted, while keys can be unquoted or double-quoted.
 - **Parser in 2^8 [lines of code](sys-yaml.sh) using pure Bash**, except for optional [jq](https://jqlang.org/) integration for JSON validation/compaction. The parser is intended to be either sourced or copied and pasted into where it's needed, or used via the function library/CLI. However, _flow_ mappings/sequences are kept as stringified JSON and are not parsed.
 - **Support for block scalars, tags, anchors/aliases, and complex mappings**, essentially implementing all of YAML except for the above limitations.
 - **Function [library](sys-yaml)** for using the parser more conveniently as well as writing YAML and other formats. Also pure Bash, except jq integration for JSON formatting and improved long string encoding performance, as well as file import/export.
@@ -52,7 +52,7 @@ Full supported syntax, with k=key, s=string, n=number (integer or float), d=digi
 [  ]*[(?|:) ][- ][[! ](k|"k"):][ ][*|[& ][! ]("s"|<n>|true|false|(||>)[d][+|-]|[]|{})][ #c]
 ```
 
-`?` and `:` (at the start) are for a complex mapping's key and value, respectively. `!` (e.g., `!!str`) is for a tag and can be used for a key and/or a value. `&` and `*` are for an anchor and alias, e.g., `&reuse` and `*reuse`, where the former is the source to be re-used and the latter its destination. `|` and `>` are for block scalars (indented text contents below the line, with `>` for folding single line-breaks into spaces), with the optional digit indicating how much further contents are indented (by default it's detected) and the optional `+` or `-` for including or trimming extra trailing newlines, respectively. `[]` and `{}` are for _flow_ mappings/sequences and can be any valid JSON array/object. They are also necessary in order to indicate an empty mapping or sequence, as a mapping or sequence without keys/items otherwise becomes no value (i.e., _null_).
+`?` and `:` (at the start) are for a complex mapping's key and value, respectively. `!` (e.g., `!!str`) is for a tag and can be used for a key and/or a value. `&` and `*` are for an anchor and alias, e.g., `&reuse` and `*reuse`, where the former is the source to be re-used and the latter its destination. `|` and `>` are for block scalars (indented text contents below the line, with `>` for folding single line-breaks into spaces), with the optional digit indicating how much further contents are indented (by default it's detected) and the optional `+` or `-` for including or trimming extra trailing newlines, respectively. `{}` and `[]` are for _flow_ mappings and sequences, respectively, and can be any valid JSON object or array. They are also necessary in order to indicate an empty mapping or sequence, as a mapping or sequence without keys or items otherwise becomes no value (i.e., _null_).
 
 Finally, directives (`%YAML` and `%TAG`) and directives/document end markers (`---`/`...`) are supported when parsing using the CLI. When writing environment variables, JSON, or YAML, aliases are transparently resolved to their anchors. When writing YAML, tag handles are resolved to their prefixes, if available.
 
