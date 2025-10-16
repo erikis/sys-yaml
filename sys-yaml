@@ -31,8 +31,8 @@ set -o pipefail
 #
 # The code is pure Bash except:
 #  - the parser / --parse / sysyaml_parse optionally uses jq (for detection also 'which')
-#  - --write* / sysyaml_encode optionally uses jq along with sed (for detection also 'which')
-#  - --write-yaml / sysyaml_write_yaml_json optionally uses jq along with sed
+#  - --write* / sysyaml_encode optionally uses jq with tr and sed (for detection also 'which')
+#  - --write-yaml / sysyaml_write_yaml_json optionally uses jq with sed
 #  - --write-value / sysyaml_write_value uses xxd for values tagged with !!binary
 #  - --binary uses xxd
 #  - --plain uses cat
@@ -851,7 +851,7 @@ sysyaml_jq() {
 # Uses jq if it's available, not disabled, and probably faster, which is for longer strings.
 sysyaml_encode() {
   local -n n_val="$1"
-  if [[ "${#n_val}" -ge 10 ]] # If jq is probably faster
+  if [[ "${#n_val}" -ge 100 ]] # If jq is probably faster
   then
     local l_jq
     if [[ -n "${sysyaml_params['root']+_}" ]] # If sysyaml_params is available
@@ -863,9 +863,9 @@ sysyaml_encode() {
     if [[ "$l_jq" != false ]] # If jq is available
     then
       # Use jq -- faster for long strings
-      local l_subst='s/\n$//' # Trim the trailing newline
-      if [[ -n "$2" ]]; then l_subst="s/(${2//\$/\\\$})/\\\\&/g;$l_subst"; fi
-      echo -n "$n_val" | "$l_jq" -Rs . | sed -zE "$l_subst"
+      if [[ -z "$2" ]]
+      then echo -n "$n_val" | "$l_jq" -Rs . | tr -d '\n' # jq -R always adds trailing newline
+      else echo -n "$n_val" | "$l_jq" -Rs . | sed -E "s/(${2//\$/\\\$})/\\\\&/g" | tr -d '\n'; fi
       return; fi; fi
   # Use yaml_encode -- faster for short strings
   echo -n '"'; yaml_encode 'n_val' "$2"; echo -n '"'
@@ -917,7 +917,7 @@ then
       echo "Usage: $command_name [option...]"
   }
   print_help() {
-    cat << '    EOF' | sed -r 's/^ {4}//'
+    cat << '    EOF' | sed -E 's/^ {4}//'
     Parse YAML files and write values to files as env. variables, JSON, YAML, and other formats.
     
     All options can be used multiple times and are processed in the order in which they are given,
