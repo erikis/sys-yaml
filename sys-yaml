@@ -1,0 +1,1106 @@
+#!/usr/bin/env bash
+# MIT License
+#
+# Copyright (c) 2025 Erik Isaksson, https://github.com/erikis
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+set -e
+set -o pipefail
+
+# This file contains:
+#  - Convenience functions for using the Sys-YAML parser (sys-yaml.sh)
+#  - Functions for writing JSON, YAML, etc.
+#  - A command-line interface that runs if this file is executed directly
+#
+# The code is pure Bash except:
+#  - the parser / --parse / sysyaml_parse optionally uses jq (for detection also 'which')
+#  - --write* / sysyaml_encode optionally uses jq along with sed (for detection also 'which')
+#  - --write-yaml / sysyaml_write_yaml_json optionally uses jq along with sed
+#  - --write-value / sysyaml_write_value uses xxd for values tagged with !!binary
+#  - --binary uses xxd
+#  - --plain uses cat
+
+# Directory where sys-yaml.sh is located (no trailing slash):
+sysyaml_script_dir="$(dirname "${BASH_SOURCE[0]}")"
+
+# Equivalents of yaml_values, yaml_keys, and yaml_anchors for functions in this file:
+declare -gA sysyaml_values # Associative array for keys and values
+declare -ga sysyaml_keys # Array for keys in the order they were added
+declare -gA sysyaml_anchors # Associative array for anchors and keys
+# If functions from this file are used separately but alongside the parser code, then, e.g.:
+# First include the above declarations and then also:
+# declare -n yaml_values='sysyaml_values' yaml_keys='sysyaml_keys' yaml_anchors='sysyaml_anchors'
+
+# Other global variables required by functions in this file:
+declare -gA sysyaml_prefixes # Associative array for tag handles and prefixes
+declare -gA sysyaml_params; sysyaml_params['root']='yaml' # Associative array for parameters
+
+# Initializes before/without parsing any YAML.
+# This makes the yaml_encode and yaml_decode functions accessible, which are used internally.
+# shellcheck disable=SC2034 # variables seem unused because they're used via namerefs
+sysyaml_init() {
+  local -a lines # Empty array
+  local -A values # Temporary associative array
+  sysyaml_parse 'lines' 'values' # Run once so that yaml_encode and yaml_decode are accessible
+}
+
+# Parses YAML lines in the array in $1 (nameref) into the global sysyaml_values associative array.
+# Keys with the order, in which values were added, preserved are in the sysyaml_keys array.
+# $2 is the root key (initial nested key(s) for all values, space-separated, default 'yaml').
+# shellcheck disable=SC2034
+sysyaml_parse() {
+  # Declare all variables used by the parser using local, to prevent leakage to global scope
+  local -n yaml_lines="$1"
+  local -n yaml_values='sysyaml_values' yaml_keys='sysyaml_keys' yaml_anchors='sysyaml_anchors'
+  local yaml_v yaml_jq yaml_invalid yaml_root yaml_subkeys yaml_indents yaml_block yaml_json
+  local yaml_l yaml_line yaml_indent yaml_hyphen yaml_key yaml_prefix yaml_length yaml_value
+  local yaml_string yaml_chomp yaml_style yaml_json_open yaml_json_close yaml_count yaml_var
+  local yaml_ktag yaml_vtag yaml_alias yaml_anchor yaml_cx yaml_previous yaml_prefix_key
+  yaml_root="$2"
+  yaml_jq="${sysyaml_params['jq']}"
+  yaml_v="${sysyaml_params['verbose']}"
+  . "$sysyaml_script_dir/sys-yaml.sh" # Just source it, as it doesn't have a parse function to call
+  sysyaml_params['invalid']="$yaml_invalid"
+}
+
+# Resets values and related arrays, in order to return to the initial state.
+sysyaml_clear() {
+  unset 'sysyaml_values' 'sysyaml_keys' 'sysyaml_anchors' 'sysyaml_prefixes'
+  declare -gA sysyaml_values sysyaml_anchors sysyaml_prefixes
+  declare -ga sysyaml_keys
+}
+
+# Sets parse parameter in $1 (nameref) to value in $2, or clear it if $2 is not set.
+# If neither argument is set, then clear all parameters.
+# Parameters that can be set:
+#  - verbose (set true to enable verbose parser output of values being added, default false)
+#  - jq (use jq for piping JSON and escaping strings, default 'jq' if found, false to disable)
+sysyaml_param() {
+  if [[ "$#" -gt 0 ]]
+  then
+    if [[ "$#" -gt 1 ]]
+    then sysyaml_params["$1"]="$2"
+    else unset "sysyaml_params[$1]"; fi
+    case "$1" in
+      jq) sysyaml_jq;; esac
+  else
+    unset 'sysyaml_params'
+    declare -gA sysyaml_params
+    sysyaml_params['root']='yaml'; fi
+}
+
+# Returns non-zero exit code if parse parameter 'invalid' is set true.
+# Example usage: sysyaml_valid && valid=true || valid=false
+sysyaml_valid() {
+  if [[ ${sysyaml_params['invalid']} == true ]]
+  then return 1; fi
+}
+
+# Extracts the first subkey in $1 (nameref), in place, but leaves it quoted if double-quoted.
+# Use sysyaml_decode afterwards to unquote and unescape if double-quoted.
+sysyaml_subkey() {
+  local -n n_val="$1"
+  if [[ "$n_val" == '"'* ]]
+  then
+    [[ "$n_val" =~ ^(\"([^\"]*|\\.)*\") ]] \
+      && n_val="${BASH_REMATCH[1]}" || n_val="${n_val:1}"
+  elif [[ "$n_val" == *' '* ]]
+  then
+    n_val="${n_val%%[[:blank:]]*}" # Trim after the first word
+  else
+    n_val=''; fi
+}
+
+# Splits space-separated string in $2 into raw subkeys, assign as array or add to $1 (nameref).
+sysyaml_subkeys() {
+  local -n n_subkeys="$1"
+  local l_subkey
+  local -a l_subkeys
+  read -ra l_subkeys <<< "$2" # This seems to handle double-quotes, incl. escaped double-quotes
+  for l_subkey in "${l_subkeys[@]}"; do n_subkeys+=("$l_subkey"); done
+}
+
+# Splits merged key in $2 into encoded subkeys, assign as array or add to $1 (nameref).
+sysyaml_subkeys_encode() {
+  # shellcheck disable=SC2178 # seems confused about namerefs + same name in different functions
+  local -n n_subkeys="$1"  # Use n_ prefix for nameref variables in this file
+  local l_subkey l_subkeys # Use l_ prefix to avoid conflict with caller's names of namerefs
+  l_subkeys=" $2" # Leading space
+  while [[ "$l_subkeys" == ' '* ]]
+  do
+    l_subkeys="${l_subkeys#' '}"
+    l_subkey="$l_subkeys"
+    sysyaml_subkey 'l_subkey'
+    l_subkeys="${l_subkeys#"$l_subkey"}"
+    sysyaml_decode 'l_subkey'
+    sysyaml_encode_subkey 'l_subkey'
+    n_subkeys+=("$l_subkey"); done
+}
+
+# Clears the subkeys array in #1 (nameref).
+sysyaml_subkeys_clear() {
+  # shellcheck disable=SC2178
+  local -n n_subkeys="$1"
+  unset 'n_subkeys'
+  n_subkeys+=()
+}
+
+# For key $1 sets value $2 (nameref).
+sysyaml_set() {
+  local l_key="$1"
+  local -n n_value="$2"
+  if [[ -z "${sysyaml_values["$l_key"]+_}" ]]; then sysyaml_keys+=("$l_key"); fi
+  sysyaml_values["$l_key"]="$n_value"
+}
+
+# For key $1 sets string value $2 (nameref), optionally also sets tag $3.
+sysyaml_import() {
+  local l_key="$1" l_type='str' l_tag="$3"
+  # shellcheck disable=SC2034
+  local -n n_import="$2"
+  sysyaml_set "$l_key" 'n_import'
+  sysyaml_set "$l_key :type" 'l_type'
+  if [[ -n "$l_tag" ]]
+  then
+    sysyaml_set "$l_key :tag" 'l_tag'; fi
+}
+
+# Registers a tag handle in $1 and its prefix in $2.
+sysyaml_prefix() {
+  local l_handle="$1" l_prefix="$2"
+  sysyaml_prefixes["$l_handle"]="$l_prefix"
+}
+
+# Reads one YAML line in $2 (nameref) and adds it to the array in $1 (nameref).
+# $3 (nameref) is a flag for whether currently in a document.
+# Returns non-zero exit code if reading lines should stop due to end of YAML document.
+sysyaml_line() {
+  local -n n_lines="$1" n_line="$2" n_doc="$3"
+  # To avoid ambiguity, be somewhat more strict than the specification
+  case "${n_line:0:1}" in
+    '-') # Full line must be '---' (and possibly spaces/tabs/comment), not just beginning
+      if [[ "$n_line" =~ ^---[[:blank:]]*(#.*)?$ ]]
+      then if [[ "$n_doc" != true ]]
+        then n_lines=(); n_doc=true
+        else return 8; fi
+      else n_lines+=("$n_line"); fi;;
+    '.') # Full line must be '...' (and possibly spaces/tabs/comment), not just beginning
+      if [[ "$n_line" =~ ^\.\.\.[[:blank:]]*(#.*)?$ ]]
+      then n_doc=false; return 9
+      else n_lines+=("$n_line"); fi;;
+    '%') # Directive name must be [A-Z][A-Z0-9_]* and not directly followed by :
+      if [[ "$n_doc" != true && "$n_line" =~ \
+        ^%([A-Z][A-Z0-9_]*)(([[:blank:]]+[^#[:blank:]][^[:blank:]]*)*)[[:blank:]]*(#.*)?$ ]]
+      then case "${BASH_REMATCH[1]}" in
+        'YAML')
+          if [[ "${BASH_REMATCH[2]}" != ' 1.2' ]]
+          then echo "Warning: Not YAML version 1.2." >&2; fi;;
+        'TAG')
+          if [[ "${BASH_REMATCH[2]}" =~ \
+            ^[[:blank:]]+(\![a-zA-Z0-9-]+\!|\!\!?)[[:blank:]]+([^[:blank:]]+)$ ]]
+          then sysyaml_prefix "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"; fi;;
+      esac; else n_lines+=("$n_line"); fi;;
+    *)
+      n_lines+=("$n_line");; esac
+}
+
+# Reads values in the array in $1 (nameref) into the global sysyaml_values associative array.
+# Either sysyaml_init or sysyaml_parse needs to have been called first, for initialization.
+# This implementation requires sysyaml_decode_value.
+sysyaml_read() {
+  # shellcheck disable=SC2178
+  local -n n_lines="$1"
+  local l_key l_val
+  for l_line in "${n_lines[@]}" # Loop over all YAML lines
+  do
+    if [[ "$l_line" =~ ^(([^\"]+|\"([^\\\"]*|\\.)*\")+)=\"(([^\"\\]*|\\.)*)\"$ ]]
+    then
+      l_key="${BASH_REMATCH[1]}"
+      l_val="${BASH_REMATCH[4]}"
+      if [[ -z "${sysyaml_values["$l_key"]+_}" ]]
+      then sysyaml_keys+=("$l_key"); fi
+      sysyaml_decode_value 'l_val'
+      sysyaml_values["$l_key"]="$l_val"
+    else
+      echo "Warning: Ignoring line (unsupported syntax). '$l_line'" >&2; fi; done
+}
+
+# Writes values using a simple format of 'key="<value>"' per line.
+# $1 can be set to an array of subkeys (nameref), in order to filter and rewrite the root.
+# $2 can be set to a renamed key for the root, or ':' to use the full key or ' ' for no root.
+# Internal: $3 can be set to false, in order to only output keys and no '="<value>"'.
+# This implementation requires sysyaml_encode.
+sysyaml_write() {
+  local l_root_key="$2" l_subkeys='' l_prefix='' l_root_prefix=''
+  local l_k l_name l_val
+  if [[ -n "$1" ]]
+  then
+    # shellcheck disable=SC2178
+    local -n n_subkeys="$1"
+    if [[ "${#n_subkeys[@]}" -gt 0 ]]
+    then
+      unset 'IFS'; l_subkeys="${n_subkeys[*]}"
+      l_prefix="$l_subkeys " # Trailing space
+      l_root_prefix="$l_subkeys"
+      if [[ "$l_root_key" == ':' ]]; then l_root_prefix=''
+      elif [[ "$l_root_key" == ' ' ]]; then l_root_key=''; l_root_prefix="$l_prefix"
+      elif [[ -z "$l_root_key" ]]; then l_root_key="${n_subkeys[-1]}"; fi; fi; fi
+  for l_k in "${sysyaml_keys[@]}"
+  do
+    if [[ "$l_k" == "$l_subkeys" || "$l_k" == "$l_prefix"* ]]
+    then
+      if [[ -z "$l_root_prefix" ]]; then l_name="$l_k"
+      elif [[ "$l_k" == "$l_subkeys"  ]]; then l_name="$l_root_key"
+      else l_name="$l_root_key${l_k#"$l_root_prefix"}"; fi
+      if [[ "$3" != false ]]
+      then
+        echo -n "$l_name"; echo -n '='
+        l_val="${sysyaml_values["$l_k"]}"
+        sysyaml_encode 'l_val'; echo
+      else
+        echo "$l_name"; fi; fi; done
+}
+
+# Writes keys using one key (space-separated subkeys) per line.
+# $1 can be set to an array of subkeys (nameref), in order to filter and rewrite the root.
+# $2 can be set to a renamed key for the root, or ':' to use the full key or ' ' for no root.
+# This implementation requires sysyaml_write and sysyaml_encode.
+sysyaml_write_keys() {
+  sysyaml_write "$1" "$2" false
+}
+
+# Writes environment variables as a Bash-compatible config file.
+# $1 can be set to an array of subkeys (nameref), in order to filter and rewrite the root.
+# $2 can be set to a renamed key for the root, or ':' to use the full key or ' ' for no root.
+# This implementation requires sysyaml_encode.
+# This implementation doesn't support anchors/aliases.
+sysyaml_write_conf_() {
+  local l_root_key="$2" l_subkeys='' l_prefix='' l_root_prefix=''
+  local l_k l_name l_val
+  if [[ -n "$1" ]]
+  then
+    # shellcheck disable=SC2178
+    local -n n_subkeys="$1"
+    if [[ "${#n_subkeys[@]}" -gt 0 ]]
+    then
+      unset 'IFS'; l_subkeys="${n_subkeys[*]}"
+      l_prefix="$l_subkeys " # Trailing space
+      l_root_prefix="$l_subkeys"
+      if [[ "$l_root_key" == ':' ]]; then l_root_prefix=''
+      elif [[ "$l_root_key" == ' ' ]]; then l_root_key=''; l_root_prefix="$l_prefix"
+      elif [[ -z "$l_root_key" ]]; then l_root_key="${n_subkeys[-1]}"; fi; fi; fi
+  for l_k in "${sysyaml_keys[@]}"
+  do
+    if [[ "$l_k" == "$l_subkeys" || "$l_k" == "$l_prefix"* ]]
+    then
+      if [[ -z "$l_root_prefix" ]]; then l_name="$l_k"
+      elif [[ "$l_k" == "$l_subkeys"  ]]; then l_name="$l_root_key"
+      else l_name="$l_root_key${l_k#"$l_root_prefix"}"; fi
+      # Only lower-case subkeys a-z0-9_, no quotes or double-underscore
+      if [[ ! "$l_name" =~ ^([a-z0-9\ ]+(_|:[0-9]+)?)+$ ]]; then continue; fi
+      # Make key upper-case, replace ':' with '_' and ' ' with '__'
+      l_name="${l_name^^}"; l_name="${l_name//:/_}"; l_name="${l_name// /__}"
+      echo -n "$l_name"; echo -n '='
+      l_val="${sysyaml_values["$l_k"]}"
+      sysyaml_encode 'l_val' '$'; echo; fi; done # Escape $ as \$ in value
+}
+
+# Writes environment variables as a Bash-compatible config file.
+# $1 is an array of subkeys (nameref), specifying where to base the root.
+# $2 can be set to a renamed key for the root, or ':' to use the full key or ' ' for no root.
+# This implementation requires sysyaml_subkey and sysyaml_encode.
+# This implementation doesn't support complex mappings, incl. tagged keys.
+sysyaml_write_conf() {
+  # shellcheck disable=SC2178
+  local -n n_subkeys="$1"
+  local -a l_keys
+  local l_root_key="$2" l_subkeys l_prefix l_root_prefix
+  local l_keys_str l_subkeys_str l_prefix l_k
+  
+  # Check that at least one subkeys was specified
+  if [[ "${#n_subkeys[@]}" -lt 1 ]]
+  then echo "Warning: No subkey for the root, nothing to write." >&2; return; fi
+  
+  # Pre-filter the keys to reduce serialization size
+  unset 'IFS'; l_subkeys="${n_subkeys[*]}"
+  l_prefix="$l_subkeys " # Trailing space
+  l_root_prefix="$l_subkeys"
+  l_keys=()
+  for l_k in "${sysyaml_keys[@]}"
+  do
+    if [[ "$l_k" == "$l_subkeys" || "$l_k" == "$l_prefix"* ]]
+    then l_keys+=("$l_k"); fi; done
+  
+  # Serialize arrays in namerefs to strings because namerefs and recursion don't mix
+  IFS=$'\n'
+  l_keys_str="${l_keys[*]}"
+  l_subkeys_str="${n_subkeys[*]}"
+  unset 'IFS'
+  
+  # Call recursive implementation
+  if [[ "$l_root_key" == ':' ]]; then l_root_key="$l_subkeys"
+  elif [[ "$l_root_key" == ' ' ]]; then l_root_key=''
+  elif [[ -z "$l_root_key" ]]; then l_root_key="${n_subkeys[-1]}"; fi
+  sysyaml_write_conf_recurse "$l_keys_str" "$l_subkeys_str" "$l_root_key"
+}
+sysyaml_write_conf_recurse() {
+  local -a l_keys l_subkeys
+  readarray -t l_keys <<< "$1"
+  readarray -t l_subkeys <<< "$2"
+  local l_root_key="$3"
+  local l_prefix l_prefix_k l_type l_i l_k l_kk l_key l_val l_alias
+  local l_subkey l_keys_str l_subkeys_str l_length
+  local -a l_subkeys_k l_keys_k
+  local -A l_visited
+  l_prefix="${l_subkeys[*]}"
+  if [[ -n "${sysyaml_values["$l_prefix :alias"]+_}" ]]
+  then
+    l_alias="${sysyaml_values["$l_prefix :alias"]}"
+    if [[ -n "${sysyaml_anchors["$l_alias"]+_}" ]]
+    then l_prefix="${sysyaml_anchors["$l_alias"]}"
+    else echo "Warning: Anchor not found." >&2; echo -n 'null'; return; fi; fi
+  l_type="${sysyaml_values["$l_prefix :type"]}"
+  l_val="${sysyaml_values["$l_prefix"]}"
+  if [[ -z "$l_type" ]]; then echo "Warning: Key not found." >&2; return; fi
+  case "$l_type" in
+    'map')
+      if [[ -n "$l_root_key" ]]; then l_root_key="$l_root_key "; fi
+      for l_k in "${l_keys[@]}"
+      do
+        l_key="${l_k#"$l_prefix "}" # Trim prefix and leading space
+        if [[ "$l_key" == "$l_k" ]]; then continue; fi # Key shorter than prefix
+        sysyaml_subkey 'l_key'
+        if [[ -z "$l_key" ]]; then :
+        elif [[ "$l_key" == ':'* ]]; then : # Don't include metadata
+        elif [[ "${l_visited["$l_key"]}" != true ]] # Ignore deeper subkeys
+        then
+          l_visited["$l_key"]=true
+          l_subkeys_k=("${l_subkeys[@]}") # Copy array
+          l_subkeys_k+=("$l_key")
+          l_prefix_k="${l_subkeys_k[*]} " # Trailing space
+          l_keys_k=()
+          for l_kk in "${l_keys[@]}"
+          do
+            if [[ "$l_kk" == "$l_prefix_k"* ]]; then l_keys_k+=("$l_kk"); fi; done
+          IFS=$'\n'
+          l_keys_str="${l_keys_k[*]}"
+          l_subkeys_str="${l_subkeys_k[*]}"
+          unset 'IFS'
+          sysyaml_write_conf_recurse "$l_keys_str" "$l_subkeys_str" "$l_root_key$l_key"; fi; done;;
+    'seq')
+      l_length="${sysyaml_values["$l_prefix :length"]}"
+      if [[ -n "$l_length" ]]
+      then
+        if [[ -n "$l_root_key" ]]; then l_root_key="$l_root_key "; fi
+        for ((l_i = 0; l_i < "$l_length"; l_i++))
+        do
+          l_key=":$l_i"
+          l_subkeys_k=("${l_subkeys[@]}") # Copy array
+          l_subkeys_k+=("$l_key")
+          l_prefix_k="${l_subkeys_k[*]} " # Trailing space
+          l_keys_k=()
+          for l_kk in "${l_keys[@]}"
+          do
+            if [[ "$l_kk" == "$l_prefix_k"* ]]; then l_keys_k+=("$l_kk"); fi; done
+          IFS=$'\n'
+          l_keys_str="${l_keys_k[*]}"
+          l_subkeys_str="${l_subkeys_k[*]}"
+          unset 'IFS'
+          sysyaml_write_conf_recurse "$l_keys_str" "$l_subkeys_str" "$l_root_key$l_key"; done; fi;;
+    'str'|'bool'|'int'|'float')
+      # Only subkeys which are lower-case a-z0-9_ without quotes and double-underscore
+      # However, sequences need to also be allowed with :[0-9]+
+      if [[ ! "$l_root_key" =~ ^([a-z0-9\ ]+(_|:[0-9]+)?)+$ ]]
+      then return; fi
+      l_name="${l_root_key^^}"; l_name="${l_name//:/_}"; l_name="${l_name// /__}"
+      echo -n "$l_name="; sysyaml_encode 'l_val' '$'; echo;; # Also escape $ to \$
+    'null')
+      :;; # Don't include nulls
+    *)
+      l_type="MISSING YAML TYPE: $l_type"
+      sysyaml_encode 'l_type';; esac
+}
+
+# Writes JSON.
+# $1 is an array of subkeys (nameref), specifying where to base the root.
+# This implementation requires sysyaml_subkey, sysyaml_encode, and sysyaml_decode.
+# This implementation doesn't support complex mappings, incl. tagged keys.
+sysyaml_write_json() {
+  # shellcheck disable=SC2178
+  local -n n_subkeys="$1"
+  local -a l_keys
+  local l_keys_str l_subkeys_str l_prefix l_k
+  
+  # Check that at least one subkeys was specified
+  if [[ "${#n_subkeys[@]}" -lt 1 ]]
+  then echo "Warning: No subkey for the root, nothing to write." >&2; echo 'null'; return; fi
+  
+  # Pre-filter the keys to reduce serialization size
+  unset 'IFS'; l_prefix="${n_subkeys[*]} " # Trailing space
+  l_keys=()
+  for l_k in "${sysyaml_keys[@]}"
+  do
+    if [[ "$l_k" == "$l_prefix"* ]]; then l_keys+=("$l_k"); fi; done
+
+  # Serialize arrays in namerefs to strings because namerefs and recursion don't mix
+  IFS=$'\n'
+  l_keys_str="${l_keys[*]}"
+  l_subkeys_str="${n_subkeys[*]}"
+  unset 'IFS'
+  
+  # Call recursive implementation
+  sysyaml_write_json_recurse "$l_keys_str" "$l_subkeys_str"
+  echo # Add a newline when finished
+}
+sysyaml_write_json_recurse() {
+  local -a l_keys l_subkeys
+  readarray -t l_keys <<< "$1"
+  readarray -t l_subkeys <<< "$2"
+  local l_prefix l_prefix_k l_type l_i l_k l_kk l_key l_val l_alias
+  local l_subkey l_keys_str l_subkeys_str l_first=true l_length
+  local -a l_subkeys_k l_keys_k
+  local -A l_visited
+  l_prefix="${l_subkeys[*]}"
+  if [[ -n "${sysyaml_values["$l_prefix :alias"]+_}" ]]
+  then
+    l_alias="${sysyaml_values["$l_prefix :alias"]}"
+    if [[ -n "${sysyaml_anchors["$l_alias"]+_}" ]]
+    then l_prefix="${sysyaml_anchors["$l_alias"]}"
+    else echo "Warning: Anchor not found." >&2; echo -n 'null'; return; fi; fi
+  l_type="${sysyaml_values["$l_prefix :type"]}"
+  l_val="${sysyaml_values["$l_prefix"]}"
+  if [[ -z "$l_type" ]]
+  then echo "Warning: Key not found." >&2; echo -n 'null'; return; fi
+  case "$l_type" in
+    'map')
+      for l_k in "${l_keys[@]}"
+      do
+        l_key="${l_k#"$l_prefix "}" # Trim prefix and leading space
+        if [[ "$l_key" == "$l_k" ]]; then continue; fi # Key shorter than prefix
+        sysyaml_subkey 'l_key'
+        if [[ -z "$l_key" ]]; then :
+        elif [[ "$l_key" == ':'* ]]; then : # Don't include metadata
+        elif [[ "${l_visited["$l_key"]}" != true ]] # Ignore deeper subkeys
+        then
+          l_visited["$l_key"]=true
+          l_subkeys_k=("${l_subkeys[@]}") # Copy array
+          l_subkeys_k+=("$l_key")
+          l_prefix_k="${l_subkeys_k[*]} " # Trailing space
+          if [[ -n "${sysyaml_values["$l_prefix_k:alias"]+_}" ]]
+          then
+            l_alias="${sysyaml_values["$l_prefix_k:alias"]}"
+            if [[ -n "${sysyaml_anchors["$l_alias"]+_}" ]]
+            then l_prefix_k="${sysyaml_anchors["$l_alias"]} " # Trailing space
+            else echo "Warning: Anchor not found." >&2; break; fi; fi
+          l_keys_k=()
+          for l_kk in "${l_keys[@]}"
+          do
+            if [[ "$l_kk" == "$l_prefix_k"* ]]; then l_keys_k+=("$l_kk"); fi; done
+          sysyaml_decode 'l_key'
+          if [[ "$l_first" == true ]]
+          then l_first=false; echo -n '{'
+          else echo -n ','; fi
+          sysyaml_encode 'l_key'
+          echo -n ':'
+          IFS=$'\n'
+          l_keys_str="${l_keys_k[*]}"
+          l_subkeys_str="${l_subkeys_k[*]}"
+          unset 'IFS'
+          sysyaml_write_json_recurse "$l_keys_str" "$l_subkeys_str"; fi; done
+      if [[ "$l_first" != true ]]
+      then echo -n '}'
+      elif [[ -n "$l_val" ]]
+      then echo "$l_val" # Embedded JSON, assumed to be safe
+      else echo -n '{}'; fi;;
+    'seq')
+      l_length="${sysyaml_values["$l_prefix :length"]}"
+      if [[ -n "$l_length" ]]
+      then
+        echo -n '['
+        for ((l_i = 0; l_i < "$l_length"; l_i++))
+        do
+          l_subkeys_k=("${l_subkeys[@]}") # Copy array
+          l_subkeys_k+=(":$l_i")
+          l_prefix_k="${l_subkeys_k[*]} " # Trailing space
+          l_keys_k=()
+          for l_kk in "${l_keys[@]}"
+          do
+            if [[ "$l_kk" == "$l_prefix_k"* ]]; then l_keys_k+=("$l_kk"); fi; done
+          if [[ "$l_i" -gt 0 ]]; then echo -n ','; fi
+          IFS=$'\n'
+          l_keys_str="${l_keys_k[*]}"
+          l_subkeys_str="${l_subkeys_k[*]}"
+          unset 'IFS'
+          sysyaml_write_json_recurse "$l_keys_str" "$l_subkeys_str"; done
+        echo -n ']'
+      else
+        if [[ -n "$l_val" ]]
+        then echo -n "$l_val" # Embedded JSON, assumed to be safe
+        else echo -n '[]'; fi; fi;;
+    'str')
+      sysyaml_encode 'l_val';;
+    'bool'|'int'|'float')
+      echo -n "$l_val";; # Boolean or number value, assumed to be safe
+    'null')
+      echo -n "$l_type";;
+    *)
+      l_type="MISSING YAML TYPE: $l_type"
+      sysyaml_encode 'l_type';; esac
+}
+
+# Writes YAML.
+# $1 is an array of subkeys (nameref), specifying where to base the root.
+# This implementation requires sysyaml_subkey, sysyaml_encode, and sysyaml_encode_tag.
+sysyaml_write_yaml() {
+  # shellcheck disable=SC2178
+  local -n n_subkeys="$1"
+  local -a l_keys
+  local l_keys_str l_subkeys_str l_prefix l_k
+  
+  # Check that at least one subkeys was specified
+  if [[ "${#n_subkeys[@]}" -lt 1 ]]
+  then echo "Warning: No subkey for the root, nothing to write." >&2; return; fi
+  
+  # Pre-filter the keys to reduce serialization size
+  unset 'IFS'; l_prefix="${n_subkeys[*]} " # Trailing space
+  l_keys=()
+  for l_k in "${sysyaml_keys[@]}"
+  do
+    if [[ "$l_k" == "$l_prefix"* ]]; then l_keys+=("$l_k"); fi; done
+
+  # Serialize arrays in namerefs to strings because namerefs and recursion don't mix
+  IFS=$'\n'
+  l_keys_str="${l_keys[*]}"
+  l_subkeys_str="${n_subkeys[*]}"
+  unset 'IFS'
+  
+  # Call recursive implementation
+  sysyaml_write_yaml_recurse "$l_keys_str" "$l_subkeys_str" '-2'
+  echo # Add a newline when finished
+}
+sysyaml_write_yaml_recurse() {
+  local -a l_keys l_subkeys
+  readarray -t l_keys <<< "$1"
+  readarray -t l_subkeys <<< "$2"
+  local l_indent="$3" l_context="$4" l_indent_space='' l_next_indent l_hyphen=''
+  local l_prefix l_prefix_k l_type l_i l_k l_kk l_key l_val l_alias l_tag l_add
+  local l_subkey l_keys_str l_subkeys_str l_first=true l_length l_jq
+  local -a l_subkeys_k l_keys_k l_lines
+  local -A l_visited
+  l_prefix="${l_subkeys[*]}"
+  if [[ -n "${sysyaml_values["$l_prefix :alias"]+_}" ]]
+  then
+    l_alias="${sysyaml_values["$l_prefix :alias"]}"
+    if [[ -n "${sysyaml_anchors["$l_alias"]+_}" ]]
+    then l_prefix="${sysyaml_anchors["$l_alias"]}"
+    else echo "Warning: Anchor not found." >&2; return; fi; fi
+  l_type="${sysyaml_values["$l_prefix :type"]}"
+  l_val="${sysyaml_values["$l_prefix"]}"
+  if [[ -z "$l_type" ]]; then echo "Warning: Key not found." >&2; return; fi
+  l_tag="${sysyaml_values["$l_prefix :tag"]}"
+  l_next_indent="$(("$l_indent"+2))"
+  case "$l_context" in
+    'm') l_indent="$l_next_indent";;
+    's') l_hyphen='- ';; esac # Need to account for the hyphen causing indentation
+  if [[ "$l_indent" -le 0 ]]; then l_indent=0; l_indent_space=''; fi # Ensure no indent if <= 0
+  case "$l_type" in
+    'map')
+      if [[ -n "$l_tag" && -z "$l_hyphen" ]]; then sysyaml_encode_tag 'l_tag'; fi
+      for l_k in "${l_keys[@]}"
+      do
+        l_key="${l_k#"$l_prefix "}" # Trim prefix and leading space
+        if [[ "$l_key" == "$l_k" ]]; then continue; fi # Key shorter than prefix
+        sysyaml_subkey 'l_key'
+        if [[ -z "$l_key" ]]; then :
+        elif [[ "$l_key" == ':'* && ! "$l_key" =~ ^:_[0-9]+$ ]]; then : # Don't include metadata
+        elif [[ "${l_visited["$l_key"]}" != true ]] # Ignore deeper subkeys
+        then
+          l_visited["$l_key"]=true
+          l_subkeys_k=("${l_subkeys[@]}") # Copy array
+          l_subkeys_k+=("$l_key")
+          l_prefix_k="${l_subkeys_k[*]} " # Trailing space
+          if [[ -n "${sysyaml_values["$l_prefix_k:alias"]+_}" ]]
+          then
+            l_alias="${sysyaml_values["$l_prefix_k:alias"]}"
+            if [[ -n "${sysyaml_anchors["$l_alias"]+_}" ]]
+            then l_prefix_k="${sysyaml_anchors["$l_alias"]} " # Trailing space
+            else echo "Warning: Anchor not found." >&2; break; fi; fi
+          l_keys_k=()
+          for l_kk in "${l_keys[@]}"
+          do
+            if [[ "$l_kk" == "$l_prefix_k"* ]]; then l_keys_k+=("$l_kk"); fi; done
+          if [[ "$l_first" != true && "$l_next_indent" -lt 2 ]]; then echo; fi
+          if [[ "$l_first" !=  true || "$l_next_indent" -ge 2 ]]; then echo; fi
+          if [[ "$l_first" == true ]]; then l_first=false; fi
+          printf "%${l_indent}s%s" "$l_indent_space" "$l_hyphen"
+          IFS=$'\n'
+          l_keys_str="${l_keys_k[*]}"
+          l_subkeys_str="${l_subkeys_k[*]}"
+          unset 'IFS'
+          if [[ "$l_key" != ':_'* ]]
+          then
+            if [[ -n "$l_hyphen" ]]; then l_hyphen=''; l_indent="$l_next_indent"
+              if [[ -n "$l_tag" ]]; then sysyaml_encode_tag 'l_tag'; fi; fi
+            echo -n "$l_key:"
+            IFS=$'\n'
+            l_keys_str="${l_keys_k[*]}"
+            l_subkeys_str="${l_subkeys_k[*]}"
+            unset 'IFS'
+            sysyaml_write_yaml_recurse "$l_keys_str" "$l_subkeys_str" "$l_next_indent" 'm'
+          else
+            if [[ -n "$l_hyphen" ]]; then l_hyphen=''; l_indent="$l_next_indent"
+              if [[ -n "$l_tag" ]]; then sysyaml_encode_tag 'l_tag'; fi
+              printf "\\n%${l_indent}s" "$l_indent_space"; fi
+            echo -n '?'
+            l_add=$'\n:key'
+            sysyaml_write_yaml_recurse "$l_keys_str" "$l_subkeys_str$l_add" "$l_next_indent" 'm'
+            if [[ -n "${sysyaml_values["$l_prefix_k:val :type"]+_}" ]]
+            then
+              printf "\\n%${l_indent}s" "$l_indent_space"
+              echo -n ':'
+              l_add=$'\n:val'
+              sysyaml_write_yaml_recurse "$l_keys_str" "$l_subkeys_str$l_add" "$l_next_indent" 'm'
+            fi; fi; fi; done
+      if [[ "$l_first" == true ]]
+      then
+        if [[ -n "$l_val" ]]
+        then sysyaml_write_yaml_json
+        else
+          case "$l_context" in
+            'm') echo -n ' ';;
+            's') printf "\\n%${l_indent}s%s" "$l_indent_space" "$l_hyphen";;
+          esac
+          echo -n '{}'; fi; fi;;
+    'seq')
+      if [[ -n "$l_tag" ]]; then sysyaml_encode_tag 'l_tag'; fi
+      l_length="${sysyaml_values["$l_prefix :length"]}"
+      if [[ -n "$l_length" ]]
+      then
+        for ((l_i = 0; l_i < "$l_length"; l_i++))
+        do
+          l_subkeys_k=("${l_subkeys[@]}") # Copy array
+          l_subkeys_k+=(":$l_i")
+          l_prefix_k="${l_subkeys_k[*]} " # Trailing space
+          l_keys_k=()
+          for l_kk in "${l_keys[@]}"
+          do
+            if [[ "$l_kk" == "$l_prefix_k"* ]]; then l_keys_k+=("$l_kk"); fi; done
+          IFS=$'\n'
+          l_keys_str="${l_keys_k[*]}"
+          l_subkeys_str="${l_subkeys_k[*]}"
+          unset 'IFS'
+          if [[ "${sysyaml_values["${l_prefix_k}:type"]}" == 'seq' ]]
+          then
+            if [[ "$l_i" -gt 0 && "$l_next_indent" -lt 2 ]]; then echo; fi
+            if [[ "$l_i" -gt 0 || "$l_next_indent" -ge 2 ]]; then echo; fi
+            printf "%${l_next_indent}s%s" "$l_indent_space" '-'; fi # Seq. in a seq needs hyphen
+          sysyaml_write_yaml_recurse "$l_keys_str" "$l_subkeys_str" "$l_next_indent" 's'; done
+      else
+        if [[ -n "$l_val" ]]
+        then
+          sysyaml_write_yaml_json
+        else
+          case "$l_context" in
+            'm') echo -n ' ';;
+            's') printf "\\n%${l_indent}s%s" "$l_indent_space" "$l_hyphen";;
+          esac
+          echo -n '[]'; fi; fi;;
+    'str')
+      case "$l_context" in
+        'm') echo -n ' ';;
+        's') printf "\\n%${l_indent}s%s" "$l_indent_space" "$l_hyphen";;
+      esac
+      if [[ -n "$l_tag" ]]; then sysyaml_encode_tag 'l_tag'; fi
+      if [[ "$l_val" == *$'\n'* ]]
+      then
+        echo -n '|'
+        readarray -t l_lines <<< "$l_val"
+        l_indent=true # Reuse existing variables
+        for l_i in "${l_lines[@]}"
+        do if [[ -n "$l_i" && "$l_i" != ' '* ]]
+          then l_indent=false; break # Indentation can be detected
+          elif [[ "$l_i" =~ ^\ +$ ]]; then break; fi; done # Need indicator to preserve spaces
+        if [[ "$l_indent" == true ]]; then echo -n '2'; fi # Indentation indicator
+        if [[ "$l_val" == *$'\n\n' ]]; then echo -n '+' # Chomp indicator: keep all trailing lines
+        elif [[ "$l_val" != *$'\n' ]]; then echo -n '-'; fi # Chomp indicator: trim trailing lines
+        l_indent_space="$(printf "%${l_next_indent}s" "$l_indent_space")"
+        if [[ "${#l_lines[@]}" -gt 0 && -z "${l_lines[-1]}" ]]; then unset 'l_lines[-1]'; fi
+        for l_i in "${l_lines[@]}"; do printf '\n%s%s' "$l_indent_space" "$l_i"; done
+        unset 'l_lines'
+      else
+        sysyaml_encode 'l_val'; fi;;
+    'bool'|'int'|'float')
+      case "$l_context" in
+        'm') echo -n ' ';;
+        's') printf "\\n%${l_indent}s%s" "$l_indent_space" "$l_hyphen";;
+      esac
+      if [[ -n "$l_tag" ]]; then sysyaml_encode_tag 'l_tag'; fi
+      echo -n "$l_val";; # Boolean or number value, assumed to be safe
+    'null')
+      case "$l_context" in
+        'm') if [[ -n "$l_tag" ]]; then echo -n ' '; fi;;
+        's') printf "\\n%${l_indent}s%s" "$l_indent_space" "$l_hyphen"
+      esac
+      if [[ -n "$l_tag" ]]; then sysyaml_encode_tag 'l_tag'; fi;;
+    *)
+      case "$l_context" in
+        'm') echo -n ' ';;
+        's') printf "\\n%${l_indent}s%s" "$l_indent_space" "$l_hyphen";; esac
+      l_type="MISSING YAML TYPE: $l_type"
+      sysyaml_encode 'l_type';; esac
+}
+sysyaml_write_yaml_json() {
+  l_indent_space="$(printf "%${l_next_indent}s" "$l_indent_space")"
+  if [[ "$l_jq" != false ]] # If jq isn't disabled
+  then
+    if [[ -z "$l_jq" ]] # If jq param isn't explicitly set yet
+    then
+      if [[ -n "${sysyaml_params+_}" ]] # If sysyaml_params is available
+      then sysyaml_jq; l_jq="${sysyaml_params['jq']}"
+      elif [[ -n "${yaml_jq+_}" ]] # If yaml_jq is available
+      then
+        if [[ -z "$yaml_jq" && -z "$(which 'jq' >/dev/null || echo '_')" ]]
+        then yaml_jq='jq'; else yaml_jq=false; fi
+        l_jq="$yaml_jq"
+      else l_jq=false; fi; fi; fi
+  if [[ "$l_jq" != false ]] # If jq is available
+  then
+    echo; echo -n "$l_val" | "$l_jq" -j . | sed "s/^/$l_indent_space/"
+  else
+    l_indent_space="$(printf "%${l_next_indent}s" "$l_indent_space")"
+    readarray -t l_lines <<< "$l_val" # Embedded JSON, assumed to be safe
+    if [[ "${#l_lines[@]}" -gt 0 && -z "${l_lines[-1]}" ]]; then unset 'l_lines[-1]'; fi
+    for l_val in "${l_lines[@]}"; do printf '\n%s%s' "$l_indent_space" "$l_val"; done
+    unset 'l_lines'; fi
+}
+
+# Returns non-zero exit code if there is a value.
+# $1 is an array of subkeys (nameref), specifying where to base the root.
+# Example usage: sysyaml_value 'subkeys' && sysyaml_write_value 'subkeys' || echo "No value"
+sysyaml_value() {
+  # shellcheck disable=SC2178
+  local -n n_subkeys="$1"
+  local l_prefix l_type
+  
+  # Check that at least one subkeys was specified
+  if [[ "${#n_subkeys[@]}" -lt 1 ]]
+  then return 1; fi
+  
+  # Check whether a value type is set
+  unset 'IFS'; l_prefix="${n_subkeys[*]}" # No trailing space
+  l_type="${sysyaml_values["$l_prefix :type"]}"
+  case "$l_type" in
+    str|bool|int|float) return;; esac
+  return 1
+}
+
+# Writes a raw value.
+# $1 is an array of subkeys (nameref), specifying where to base the root.
+# $2 can be set to a command for decompression of a binary value, '-' for no command (default).
+sysyaml_write_value() {
+  # shellcheck disable=SC2178
+  local -n n_subkeys="$1"
+  local l_prefix l_type l_tag l_decompress="${2:-"-"}"
+  
+  # Check that at least one subkeys was specified
+  if [[ "${#n_subkeys[@]}" -lt 1 ]]
+  then echo "Warning: No subkey for the value, nothing to write." >&2; return; fi
+  
+  # Print the value as-is
+  unset 'IFS'; l_prefix="${n_subkeys[*]}" # No trailing space
+  l_type="${sysyaml_values["$l_prefix :type"]}"
+  l_tag="${sysyaml_values["$l_prefix :tag"]}"
+  if [[ -z "$l_type" ]]; then echo "Warning: Value not found." >&2; return; fi
+  case "$l_type" in
+    str|bool|int|float)
+      if [[ "$l_tag" != '!!binary' && "$l_tag" != 'tag:yaml.org,2002:binary' ]]
+      then echo -n "${sysyaml_values["$l_prefix"]}"
+      elif [[ "$l_decompress" == '-' ]]
+      then xxd -plain -revert <<< "${sysyaml_values["$l_prefix"]}"
+      else xxd -plain -revert <<< "${sysyaml_values["$l_prefix"]}" | "$l_decompress"; fi;; esac
+}
+
+# Sets parse parameter 'jq' to a value depending on whether jq is available.
+sysyaml_jq() {
+  if [[ -z "${sysyaml_params['jq']}" ]] # If param already has a value, keep it
+  then
+    if [[ -z "$(which 'jq' >/dev/null || echo '_')" ]]
+    then sysyaml_params['jq']='jq'
+    else sysyaml_params['jq']=false; fi; fi
+}
+
+# Escape and double-quote string in $1 (nameref), print to stdout.
+# If $2 is set to '$' then dollar signs are also escaped. Other characters may not work.
+# Uses jq if it's available, not disabled, and probably faster, which is for longer strings.
+sysyaml_encode() {
+  local -n n_val="$1"
+  if [[ "${#n_val}" -ge 10 ]] # If jq is probably faster
+  then
+    local l_jq
+    if [[ -n "${sysyaml_params['root']+_}" ]] # If sysyaml_params is available
+    then sysyaml_jq; l_jq="${sysyaml_params['jq']}" # Check using sysyaml_jq
+    else # Otherwise, assume that the global yaml_jq is or can be used
+      if [[ -z "$yaml_jq" && -z "$(which 'jq' >/dev/null || echo '_')" ]]
+      then yaml_jq='jq'; else yaml_jq=false; fi # Do the same as the parser
+      l_jq="$yaml_jq"; fi
+    if [[ "$l_jq" != false ]] # If jq is available
+    then
+      # Use jq -- faster for long strings
+      local l_subst='s/\n$//' # Trim the trailing newline
+      if [[ -n "$2" ]]; then l_subst="s/(${2//\$/\\\$})/\\\\&/g;$l_subst"; fi
+      echo -n "$n_val" | "$l_jq" -Rs . | sed -zE "$l_subst"
+      return; fi; fi
+  # Use yaml_encode -- faster for short strings
+  echo -n '"'; yaml_encode 'n_val' "$2"; echo -n '"'
+}
+
+# Escape and only if necessary double-quote a subkey in $1 (nameref), in place.
+sysyaml_encode_subkey() {
+  local -n n_subkey="$1"
+  n_subkey="$(yaml_encode 'n_subkey')"
+  if [[ "$n_subkey" =~ ^$|[\\:\ ] ]]; then n_subkey="\"$n_subkey\""; fi
+}
+
+# Print a tag in $1 (nameref) followed by a space to stdout.
+# First the prefix is resolved if possible.
+sysyaml_encode_tag() {
+  local -n n_tag="$1"
+  if [[ -z "$n_tag" ]]; then return; fi # If no tag, don't print anything
+  # Resolve prefix for tag handle if possible, using sysyaml_prefixes
+  if [[ "$n_tag" =~ ^(\![a-zA-Z0-9-]+\!|\!\!?)(.*)$ && \
+    ! ("${BASH_REMATCH[1]}" == '!' && "${BASH_REMATCH[2]}" == '<'*) && \
+    -n "${sysyaml_prefixes["${BASH_REMATCH[1]}"]+_}" ]]
+  then
+    echo -n "${sysyaml_prefixes["${BASH_REMATCH[1]}"]}${BASH_REMATCH[2]} "
+    return; fi
+  # Or: Print tag as-is
+  echo -n "$n_tag "
+}
+
+# If string in $1 (nameref) is in double-quotes, then unquote and unescape it in place.
+sysyaml_decode() {
+  local -n n_val="$1"
+  if [[ "$n_val" == '"'*'"' ]]
+  then
+    n_val="${n_val:1:-1}"
+    yaml_decode 'n_val'; fi
+}
+
+# Unescape string in $1 (nameref) in place.
+sysyaml_decode_value() {
+  local -n n_val="$1"
+  yaml_decode 'n_val'
+}
+
+# If this script is being executed directly instead of sourced
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]
+then
+  # Prepare help messages
+  print_usage() {
+      echo "Usage: $command_name [option...]"
+  }
+  print_help() {
+    cat << '    EOF' | sed -r 's/^ {4}//'
+    Parse YAML files and write values to files as env. variables, JSON, YAML, and other formats.
+    
+    All options can be used multiple times and are processed in the order in which they are given,
+    except for --help, --verbose, and --jq.
+    
+    Options:
+      --help, -h                    show this help message and exit
+      --verbose, -v                 enable verbose parser output of values being added
+      --jq, -q <jq>                 command to use for jq, false to disable, default detects jq
+      --root, -r <key>              set implicit key to the root, space-separated, default 'yaml'
+      --name, -n <key>              set initial key for writing, or : for full or ' ' for none
+      --in, -i <file>               set input file, by filename, or - for stdin, default -
+      --out, -o <file>              set output file, by filename, or - for stdout, default -
+      --plain, -l <file>            import plain-text data to the root from file, by filename
+      --binary, -x <file>           import binary data to the root from file, by filename
+      --compress, -g <gzip>         command for compressing binary data, or - for none, default -
+      --decompress, -m <gunzip>     command for decompress. binary data, or - for none, default -
+      --clear, -c                   remove all current values, restoring initial state
+      --parse, -p                   parse one YAML document from input file
+      --read, -b                    read values from input file, previously written using --write
+      --write, -d                   write values to output file, using one key-value per line
+      --write-keys, -k              write keys to output file, using one key per line
+      --write-value, -w             write a raw value to output file, if the value exists
+      --write-line, -z <line>       write a raw line to output file
+      --write-conf, -f              write environment variables (Bash-compatible) to output file
+      --write-json, -j              write JSON to output file
+      --write-yaml, -y              write YAML to output file
+      --subkeys, -s                 clear subkeys for where to base root, default same as --root
+      --subkeys-add, -a <key>       add raw, space-separated (possibly double-quoted) subkey(s)
+      --subkeys-encode, -e <key>    encode (i.e., double-quote if needed) and add subkey(s)
+    EOF
+  }
+
+  # Parse command options
+  command_name="$0"
+  if [[ "$command_name" == "/"* ]]
+  then command_name="$(basename "$command_name")"; fi
+  getopt_longoptions="help,verbose,jq:,root:,name:,in:,out:,plain:,binary:,compress:,decompress:"
+  getopt_longoptions="$getopt_longoptions,clear,parse,read"
+  getopt_longoptions="$getopt_longoptions,write,write-keys,write-value,write-line:"
+  getopt_longoptions="$getopt_longoptions,write-conf,write-json,write-yaml"
+  getopt_longoptions="$getopt_longoptions,subkeys,subkeys-add:,subkeys-encode:"
+  command_args="$(getopt \
+    --options "h,v,q:,r:,n:,i:,o:,l:,x:,g:,m:,c,p,b,d,k,w,z:,f,j,y,s,a:,e:" \
+    --longoptions "$getopt_longoptions" \
+    --name "$command_name" -- "$@")"
+  # Set $1 etc. to those provided by getopt so that lone -- ends option list
+  eval set -- "$command_args"
+  
+  # Do a first round of checking command options
+  if [[ "$1" == '--' ]] # If no options,
+  then                  # print help to stderr
+    print_usage >&2; print_help >&2; exit; fi # Not an error
+  while :
+  do
+    case "$1" in
+      -h|--help) print_usage; print_help; exit;;
+      -v|--verbose) sysyaml_param 'verbose' true; shift;;
+      -q|--jq) sysyaml_param 'jq' "$2"; shift 2;;
+      -r|-n|--root|--name) shift 2;;
+      -i|-o|-l|-x|--in|--out|--plain|--binary) shift 2;;
+      -g|-m|--compress|--decompress) shift 2;;
+      -c|--clear) shift;;
+      -p|-b|--parse|--read) shift;;
+      -d|-k|-w|--write|--write-keys|--write-value) shift;;
+      -z|--write-line) shift 2;;
+      -f|-j|-y|--write-conf|--write-json|--write-yaml) shift;;
+      -s|--subkeys) shift;;
+      -a|-e|--subkeys-add|--subkeys-encode) shift 2;;
+      --) shift; break;;
+      *) echo "Error: Option not implemented." >&2; exit 1;; esac; done
+  if [[ "$#" -gt 0 ]]
+  then
+    echo "Error: Positional arguments are not supported. Use options." >&2
+    print_usage >&2; print_help >&2; exit 1; fi
+  eval set -- "$command_args" # Reset $1 etc.
+  
+  # Intialize defaults
+  sysyaml_init # In case e.g. --write-* needs encode without prior parsing
+  exec 10<&0 # Default in from stdin
+  exec 11>&1 # Default out to stdout
+  in_file='-'
+  out_file='-'
+  root_key='yaml'
+  name_key=''
+  compress_cmd='-'
+  decompress_cmd='-'
+  # shellcheck disable=SC2034 # "not in use" but is actually used via namerefs
+  in_lines=()
+  in_doc=false
+  # shellcheck disable=SC2034
+  declare -a subkeys
+  # sysyaml_write_json and sysyaml_write_yaml require a subkeys array with at least one element.
+  # For sysyaml_write and sysyaml_write_conf it may also be empty or not provided.
+  sysyaml_subkeys 'subkeys' "$root_key"
+  
+  # Process command options
+  while :
+  do
+    case "$1" in
+      -h|--help) shift;;
+      -v|--verbose) shift;;
+      -q|--jq) shift 2;;
+      -r|--root)
+        root_key="${2:-"yaml"}"
+        sysyaml_param 'root' "$root_key"
+        sysyaml_subkeys_clear 'subkeys'
+        sysyaml_subkeys 'subkeys' "$root_key"
+        shift 2;;
+      -n|--name) name_key="${2:-""}"; shift 2;;
+      -i|--in)
+        in_file="${2:-"-"}"
+        exec 10<&-
+        if [[ "$in_file" == '-' ]]
+        then exec 10<&0
+        else exec 10<"$in_file"; fi
+        in_lines=()
+        # shellcheck disable=SC2034
+        in_doc=false
+        shift 2;;
+      -o|--out)
+        out_file="${2:-"-"}"
+        exec 11>&-
+        if [[ "$out_file" == '-' ]]
+        then exec 11>&1
+        else exec 11>"$out_file"; fi
+        shift 2;;
+      -l|--plain)
+        #import_contents=$(< "$2") # Doesn't preserve trailing newlines
+        # Workaround to preserve trailing newlines
+        import_contents="$(cat "${2:-"-"}"; echo -n 'EOF')"
+        import_contents="${import_contents%'EOF'}" # Preserve trailing newlines
+        sysyaml_import "$root_key" 'import_contents'
+        unset 'import_contents'
+        shift 2;;
+      -x|--binary)
+        if [[ "$compress_cmd" == '-' ]]
+        then import_contents="$(xxd -plain "${2:-"-"}"; echo -n 'EOF')"
+        elif [[ "${2:-"-"}" == '-' ]]
+        then import_contents="$("$compress_cmd" | xxd -plain '-'; echo -n 'EOF')"
+        else import_contents="$("$compress_cmd" < "$2" | xxd -plain '-'; echo -n 'EOF')"; fi
+        import_contents="${import_contents%'EOF'}" # Preserve trailing newlines
+        sysyaml_import "$root_key" 'import_contents' '!!binary'
+        unset 'import_contents'
+        shift 2;;
+      -g|--compress) compress_cmd="${2:-"-"}"; shift 2;;
+      -m|--decompress) decompress_cmd="${2:-"-"}"; shift 2;;
+      -c|--clear) sysyaml_clear; shift;;
+      -p|--parse)
+        IFS='' # Otherwise line indentation won't be preserved
+        # shellcheck disable=SC2034
+        while read -r in_line <&10
+        do sysyaml_line 'in_lines' 'in_line' 'in_doc' || break; done
+        unset 'IFS'
+        sysyaml_parse 'in_lines' "$root_key"
+        in_lines=()
+        shift;;
+      -b|--read)
+        readarray -t in_lines <&10 # Read whole file as one document
+        sysyaml_read 'in_lines'
+        # shellcheck disable=SC2034
+        in_lines=()
+        shift;;
+      -z|--write-line) echo "${2:-""}" >&11; shift 2;;
+      -w|--write-value)
+        sysyaml_value 'subkeys' && sysyaml_write_value 'subkeys' "$decompress_cmd" >&11 \
+          || echo "Warning: Value not found." >&2
+        shift;;
+      -d|-k|-f|-j|-y|--write|--write-*)
+        write_func=''
+        case "$1" in
+          --write|-d) write_func='sysyaml_write';;
+          --write-keys|-k) write_func='sysyaml_write_keys';;
+          --write-conf|-f) write_func='sysyaml_write_conf';;
+          --write-json|-j) write_func='sysyaml_write_json';;
+          --write-yaml|-y) write_func='sysyaml_write_yaml';; esac
+        "$write_func" 'subkeys' "$name_key" >&11 # Some have no 2nd arg., but then it's ignored
+        #compgen -v >&2 # Uncomment to check that no unintended globals have leaked
+        shift;;
+      -s|--subkeys) sysyaml_subkeys_clear 'subkeys'; shift;;
+      -a|--subkeys-add) sysyaml_subkeys 'subkeys' "${2:-""}"; shift 2;;
+      -e|--subkeys-encode) sysyaml_subkeys_encode 'subkeys' "${2:-""}"; shift 2;;
+      --)
+        exec 10>&-
+        exec 11>&-
+        sysyaml_valid && exit 0 || exit 2;; esac; done; fi # Use exit code 2 if YAML was invalid
