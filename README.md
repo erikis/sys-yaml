@@ -1,6 +1,6 @@
 # Sys-YAML
 
-Limited [YAML](https://yaml.org/spec/1.2.2/) with [JSON](https://www.json.org/)-conforming values, parser written in Bash, and CLI for writing environment variables, JSON, and YAML
+Limited [YAML](https://yaml.org/spec/1.2.2/) with [JSON](https://www.json.org/)-conformant values, parser written in Bash, and CLI for writing environment variables, JSON, and YAML
 
 ## Features
 
