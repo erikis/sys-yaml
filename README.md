@@ -97,10 +97,18 @@ or
 sys-yaml -i test.yml -pa my_mapping -y
 ```
 
+## Requirements
+
+Bash 5, due to use of associative arrays and namerefs.
+
+### macOS
+
+Install `bash` from MacPorts or Homebrew, as the pre-installed Bash version is too old.
+
 ## Usage
 
 ```
-Usage: ./sys-yaml [option...]
+Usage: sys-yaml [option...]
 Parse YAML files and write values to files as env. variables, JSON, YAML, and other formats.
 
 All options can be used multiple times and are processed in the order in which they are given,
@@ -109,28 +117,28 @@ except for --help, --verbose, and --jq.
 Options:
   --help, -h                    show this help message and exit
   --verbose, -v                 enable verbose parser output of values being added
-  --jq, -q <jq>                 command to use for jq, false to disable, default detects jq
-  --root, -r <key>              set implicit key to the root, space-separated, default 'yaml'
-  --name, -n <key>              set initial key for writing, or : for full or ' ' for none
-  --in, -i <file>               set input file, by filename, or - for stdin, default -
-  --out, -o <file>              set output file, by filename, or - for stdout, default -
-  --plain, -l <file>            import plain-text data to the root from file, by filename
-  --binary, -x <file>           import binary data to the root from file, by filename
-  --compress, -g <gzip>         command for compressing binary data, or - for none, default -
-  --decompress, -m <gunzip>     command for decompress. binary data, or - for none, default -
+  --jq=, -q <jq>                command to use for jq, false to disable, default detects jq
+  --root=, -r <key>             set implicit key to the root, space-separated, default 'yaml'
+  --name=, -n <key>             set initial key for writing, or : for full or ' ' for none
+  --in=, -i <file>              set input file, by filename, or - for stdin, default -
+  --out=, -o <file>             set output file, by filename, or - for stdout, default -
+  --plain=, -l <file>           import plain-text data to the root from file, by filename
+  --binary=, -x <file>          import binary data to the root from file, by filename
+  --compress=, -g <gzip>        command for compressing binary data, or - for none, default -
+  --decompress=, -m <gunzip>    command for decompress. binary data, or - for none, default -
   --clear, -c                   remove all current values, restoring initial state
   --parse, -p                   parse one YAML document from input file
   --read, -b                    read values from input file, previously written using --write
   --write, -d                   write values to output file, using one key-value per line
   --write-keys, -k              write keys to output file, using one key per line
   --write-value, -w             write a raw value to output file, if the value exists
-  --write-line, -z <line>       write a raw line to output file
+  --write-line=, -z <line>      write a raw line to output file
   --write-conf, -f              write environment variables (Bash-compatible) to output file
   --write-json, -j              write JSON to output file
   --write-yaml, -y              write YAML to output file
   --subkeys, -s                 clear subkeys for where to base root, default same as --root
-  --subkeys-add, -a <key>       add raw, space-separated (possibly double-quoted) subkey(s)
-  --subkeys-encode, -e <key>    encode (i.e., double-quote if needed) and add subkey(s)
+  --subkeys-add=, -a <key>      add raw, space-separated (possibly double-quoted) subkey(s)
+  --subkeys-encode=, -e <key>   encode (i.e., double-quote if needed) and add subkey(s)
 ```
 
 ## Limited YAML
