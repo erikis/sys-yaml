@@ -28,6 +28,8 @@ my_boolean: false
 
 my_mapping:
   another_key: "value for another_key in my_mapping"
+  value_on_next_line:
+    "the value can be here too"
   no_value: # This key has no value
   my_sequence:
     - "first item"
