@@ -152,9 +152,9 @@ do # Inserted ignored and impossible final line $'#\n' to ensure block/JSON end 
   if [[ "$yaml_line" =~ ^[[:blank:]]*(#.*)?$ ]]; then : # Ignoring blank line/comment
   # Match the line against a regex for the full supported YAML syntax
   elif [[ "$yaml_line" =~ \
-    ^( *)([\?:] *)?(- *)?((\![^[:blank:]]+[[:blank:]]+)?[^:\"]+:|\"([^\\]*|\\.)*\":)?[[:blank:]]*(
-    $ ignore )?((\*[^[:blank:]]+)|(([\!\&][^[:blank:]]+[[:blank:]]*)*)(|\"(.*)\"|true|false|null|\
-    $ |-?[0-9]+(\.[0-9]+)?([Ee][+-]?[0-9]+)?|(\||\>)[0-9+-]*|\{.*|\[.*))?[[:blank:]]*(#.*)?$ ]]
+    ^( *)([\?:] *)?(- *)?((\![^[:blank:]]+[[:blank:]]+)?[^:\"]+:|\"([^\\]*|\\.)*\":)?[[:blank:]]*(\
+    $ ignore )?((\*[^[:blank:]]+)|(([\!\&][^[:blank:]]+[[:blank:]]*)*)(\"(.*)\"|true|false|null|\
+    $ |-?[0-9]+(\.[0-9]+)?([Ee][+-]?[0-9]+)?|(\||\>)[0-9+-]*|\{.*|\[.*)?)?[[:blank:]]*(#.*)?$ ]]
   then
     yaml_cx="${BASH_REMATCH[2]}"; yaml_hyphen="${BASH_REMATCH[3]}"
     yaml_key="${BASH_REMATCH[4]}"; yaml_ktag="${BASH_REMATCH[5]}"
