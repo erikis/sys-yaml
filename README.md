@@ -63,7 +63,7 @@ Finally, directives (`%YAML` and `%TAG`) and directives/document end markers (`-
 
 ### Convert YAML to environment variables
 
-Provide your own YAML file called _test.yml_, e.g., the example above.
+Provide your own YAML file called _test.yml_, e.g., the example above. Alternatively, change the filename to `-` below to use standard input (which is also the default).
 
 This assumes that keys in the YAML are lower-case a-z, 0-9, _ with double-underscore being reserved. Also, recall that all string values in the YAML must be double-quoted.
 
