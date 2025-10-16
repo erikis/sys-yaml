@@ -105,6 +105,14 @@ Bash 5, due to use of associative arrays and namerefs.
 
 Install `bash` from MacPorts or Homebrew, as the pre-installed Bash version is too old.
 
+It is recommended to also install `jq`.
+
+### Debian/Ubuntu
+
+Bash 5 is in Debian since version 10 (Buster) and in Ubuntu since 20.04 LTS (Focal Fossa).
+
+Recommended: `apt install jq`
+
 ## Usage
 
 ```
