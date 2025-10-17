@@ -370,9 +370,9 @@ sysyaml_write_conf_recurse() {
   local -a l_subkeys_k l_keys_k
   local -A l_visited
   l_prefix="${l_subkeys[*]}"
-  if [[ -n "${sysyaml_values["$l_prefix :alias"]+_}" ]]
+  if [[ -n "${sysyaml_values["$l_prefix 'alias'"]+_}" ]]
   then
-    l_alias="${sysyaml_values["$l_prefix :alias"]}"
+    l_alias="${sysyaml_values["$l_prefix 'alias'"]}"
     if [[ -n "${sysyaml_anchors["$l_alias"]+_}" ]]
     then l_prefix="${sysyaml_anchors["$l_alias"]}"
     else echo "Warning: Anchor not found." >&2; echo -n 'null'; return; fi; fi
@@ -478,9 +478,9 @@ sysyaml_write_json_recurse() {
   local -a l_subkeys_k l_keys_k
   local -A l_visited
   l_prefix="${l_subkeys[*]}"
-  if [[ -n "${sysyaml_values["$l_prefix :alias"]+_}" ]]
+  if [[ -n "${sysyaml_values["$l_prefix 'alias'"]+_}" ]]
   then
-    l_alias="${sysyaml_values["$l_prefix :alias"]}"
+    l_alias="${sysyaml_values["$l_prefix 'alias'"]}"
     if [[ -n "${sysyaml_anchors["$l_alias"]+_}" ]]
     then l_prefix="${sysyaml_anchors["$l_alias"]}"
     else echo "Warning: Anchor not found." >&2; echo -n 'null'; return; fi; fi
@@ -503,9 +503,9 @@ sysyaml_write_json_recurse() {
           l_subkeys_k=("${l_subkeys[@]}") # Copy array
           l_subkeys_k+=("$l_key")
           l_prefix_k="${l_subkeys_k[*]} " # Trailing space
-          if [[ -n "${sysyaml_values["$l_prefix_k:alias"]+_}" ]]
+          if [[ -n "${sysyaml_values["$l_prefix_k'alias'"]+_}" ]]
           then
-            l_alias="${sysyaml_values["$l_prefix_k:alias"]}"
+            l_alias="${sysyaml_values["$l_prefix_k'alias'"]}"
             if [[ -n "${sysyaml_anchors["$l_alias"]+_}" ]]
             then l_prefix_k="${sysyaml_anchors["$l_alias"]} " # Trailing space
             else echo "Warning: Anchor not found." >&2; break; fi; fi
@@ -605,9 +605,9 @@ sysyaml_write_yaml_recurse() {
   local -a l_subkeys_k l_keys_k l_lines
   local -A l_visited
   l_prefix="${l_subkeys[*]}"
-  if [[ -n "${sysyaml_values["$l_prefix :alias"]+_}" ]]
+  if [[ -n "${sysyaml_values["$l_prefix 'alias'"]+_}" ]]
   then
-    l_alias="${sysyaml_values["$l_prefix :alias"]}"
+    l_alias="${sysyaml_values["$l_prefix 'alias'"]}"
     if [[ -n "${sysyaml_anchors["$l_alias"]+_}" ]]
     then l_prefix="${sysyaml_anchors["$l_alias"]}"
     else echo "Warning: Anchor not found." >&2; return; fi; fi
@@ -636,9 +636,9 @@ sysyaml_write_yaml_recurse() {
           l_subkeys_k=("${l_subkeys[@]}") # Copy array
           l_subkeys_k+=("$l_key")
           l_prefix_k="${l_subkeys_k[*]} " # Trailing space
-          if [[ -n "${sysyaml_values["$l_prefix_k:alias"]+_}" ]]
+          if [[ -n "${sysyaml_values["$l_prefix_k'alias'"]+_}" ]]
           then
-            l_alias="${sysyaml_values["$l_prefix_k:alias"]}"
+            l_alias="${sysyaml_values["$l_prefix_k'alias'"]}"
             if [[ -n "${sysyaml_anchors["$l_alias"]+_}" ]]
             then l_prefix_k="${sysyaml_anchors["$l_alias"]} " # Trailing space
             else echo "Warning: Anchor not found." >&2; break; fi; fi

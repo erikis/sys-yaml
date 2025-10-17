@@ -217,7 +217,7 @@ do # Inserted ignored and impossible final line $'#\n' to ensure block/JSON end 
     if [[ -n "$yaml_vtag" ]]; then yaml_set "$yaml_prefix_key 'tag'" "$yaml_vtag"; fi
     if [[ -n "$yaml_anchor" ]]; then # shellcheck disable=SC2034
       yaml_anchors["$yaml_anchor"]="$yaml_prefix_key"; fi
-    if [[ -n "$yaml_alias" ]]; then yaml_set "$yaml_prefix_key :alias" "${yaml_alias#'*'}"; fi
+    if [[ -n "$yaml_alias" ]]; then yaml_set "$yaml_prefix_key 'alias'" "${yaml_alias#'*'}"; fi
     if [[ -n "$yaml_key" && -z "$yaml_value" ]]
     then                                    # If key but no value
       yaml_subkeys+=("$yaml_key"); yaml_indents+=("$yaml_indent") # Push key and indent to stack
