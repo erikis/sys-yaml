@@ -916,8 +916,14 @@ then
   print_usage() {
       echo "Usage: $command_name [option...]"
   }
+  print_unindent() {
+    local line
+    IFS=''; while read -r line
+    do echo "${line#"$1"}"; done
+    unset 'IFS'
+  }
   print_help() {
-    cat << '    EOF' | sed -E 's/^ {4}//'
+    print_unindent '    ' << '    EOF'
     Parse YAML files and write values to files as env. variables, JSON, YAML, and other formats.
     
     All options can be used multiple times and are processed in the order in which they are given,
