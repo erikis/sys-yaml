@@ -101,6 +101,8 @@ sys-yaml -i test.yml -pa my_mapping -y
 
 Bash 5, due to use of associative arrays and namerefs.
 
+`xxd` is required for `--binary` and for `--write-value` with a value tagged !!binary.
+
 ### macOS
 
 Install `bash` from MacPorts or Homebrew, as the pre-installed Bash version is too old.
@@ -111,19 +113,20 @@ It is recommended to also install `jq`.
 
 Bash 5 is in Debian since version 10 (Buster) and in Ubuntu since 20.04 LTS (Focal Fossa).
 
-Recommended: `apt install jq`
+Recommended: `apt install jq xxd`
 
 ## Usage
 
 ```
-Usage: sys-yaml [option...]
+Usage: sys-yaml [OPTION...]
 Parse YAML files and write values to files as env. variables, JSON, YAML, and other formats.
 
 All options can be used multiple times and are processed in the order in which they are given,
-except for --help, --verbose, and --jq.
+except for --help, --version, --verbose, and --jq.
 
 Options:
   --help, -h                    show this help message and exit
+  --version                     output version information and exit
   --verbose, -v                 enable verbose parser output of values being added
   --jq=, -q <jq>                command to use for jq, false to disable, default detects jq
   --root=, -r <key>             set implicit key to the root, space-separated, default 'yaml'
