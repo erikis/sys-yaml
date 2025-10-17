@@ -176,10 +176,10 @@ sysyaml_import() {
   # shellcheck disable=SC2034
   local -n n_import="$2"
   sysyaml_set "$l_key" 'n_import'
-  sysyaml_set "$l_key :type" 'l_type'
+  sysyaml_set "$l_key 'type'" 'l_type'
   if [[ -n "$l_tag" ]]
   then
-    sysyaml_set "$l_key :tag" 'l_tag'; fi
+    sysyaml_set "$l_key 'tag'" 'l_tag'; fi
 }
 
 # Registers a tag handle in $1 and its prefix in $2.
@@ -314,9 +314,9 @@ sysyaml_write_conf_() {
       elif [[ "$l_k" == "$l_subkeys"  ]]; then l_name="$l_root_key"
       else l_name="$l_root_key${l_k#"$l_root_prefix"}"; fi
       # Only lower-case subkeys a-z0-9_, no quotes or double-underscore
-      if [[ ! "$l_name" =~ ^([a-z0-9\ ]+(_|:[0-9]+)?)+$ ]]; then continue; fi
+      if [[ ! "$l_name" =~ ^([a-z0-9\ ]+(_|\'[0-9]+\')?)+$ ]]; then continue; fi
       # Make key upper-case, replace ':' with '_' and ' ' with '__'
-      l_name="${l_name^^}"; l_name="${l_name//:/_}"; l_name="${l_name// /__}"
+      l_name="${l_name^^}"; l_name="${l_name//\'/}"; l_name="${l_name// /__}"
       echo -n "$l_name"; echo -n '='
       l_val="${sysyaml_values["$l_k"]}"
       sysyaml_encode 'l_val' '$'; echo; fi; done # Escape $ as \$ in value
@@ -376,7 +376,7 @@ sysyaml_write_conf_recurse() {
     if [[ -n "${sysyaml_anchors["$l_alias"]+_}" ]]
     then l_prefix="${sysyaml_anchors["$l_alias"]}"
     else echo "Warning: Anchor not found." >&2; echo -n 'null'; return; fi; fi
-  l_type="${sysyaml_values["$l_prefix :type"]}"
+  l_type="${sysyaml_values["$l_prefix 'type'"]}"
   l_val="${sysyaml_values["$l_prefix"]}"
   if [[ -z "$l_type" ]]; then echo "Warning: Key not found." >&2; return; fi
   case "$l_type" in
@@ -405,13 +405,13 @@ sysyaml_write_conf_recurse() {
           unset 'IFS'
           sysyaml_write_conf_recurse "$l_keys_str" "$l_subkeys_str" "$l_root_key$l_key"; fi; done;;
     'seq')
-      l_length="${sysyaml_values["$l_prefix :length"]}"
+      l_length="${sysyaml_values["$l_prefix 'length'"]}"
       if [[ -n "$l_length" ]]
       then
         if [[ -n "$l_root_key" ]]; then l_root_key="$l_root_key "; fi
         for ((l_i = 0; l_i < "$l_length"; l_i++))
         do
-          l_key=":$l_i"
+          l_key="'$l_i'"
           l_subkeys_k=("${l_subkeys[@]}") # Copy array
           l_subkeys_k+=("$l_key")
           l_prefix_k="${l_subkeys_k[*]} " # Trailing space
@@ -427,9 +427,9 @@ sysyaml_write_conf_recurse() {
     'str'|'bool'|'int'|'float')
       # Only subkeys which are lower-case a-z0-9_ without quotes and double-underscore
       # However, sequences need to also be allowed with :[0-9]+
-      if [[ ! "$l_root_key" =~ ^([a-z0-9\ ]+(_|:[0-9]+)?)+$ ]]
+      if [[ ! "$l_root_key" =~ ^([a-z0-9\ ]+(_|\'[0-9]+\')?)+$ ]]
       then return; fi
-      l_name="${l_root_key^^}"; l_name="${l_name//:/_}"; l_name="${l_name// /__}"
+      l_name="${l_root_key^^}"; l_name="${l_name//\'/}"; l_name="${l_name// /__}"
       echo -n "$l_name="; sysyaml_encode 'l_val' '$'; echo;; # Also escape $ to \$
     'null')
       :;; # Don't include nulls
@@ -484,7 +484,7 @@ sysyaml_write_json_recurse() {
     if [[ -n "${sysyaml_anchors["$l_alias"]+_}" ]]
     then l_prefix="${sysyaml_anchors["$l_alias"]}"
     else echo "Warning: Anchor not found." >&2; echo -n 'null'; return; fi; fi
-  l_type="${sysyaml_values["$l_prefix :type"]}"
+  l_type="${sysyaml_values["$l_prefix 'type'"]}"
   l_val="${sysyaml_values["$l_prefix"]}"
   if [[ -z "$l_type" ]]
   then echo "Warning: Key not found." >&2; echo -n 'null'; return; fi
@@ -530,14 +530,14 @@ sysyaml_write_json_recurse() {
       then echo "$l_val" # Embedded JSON, assumed to be safe
       else echo -n '{}'; fi;;
     'seq')
-      l_length="${sysyaml_values["$l_prefix :length"]}"
+      l_length="${sysyaml_values["$l_prefix 'length'"]}"
       if [[ -n "$l_length" ]]
       then
         echo -n '['
         for ((l_i = 0; l_i < "$l_length"; l_i++))
         do
           l_subkeys_k=("${l_subkeys[@]}") # Copy array
-          l_subkeys_k+=(":$l_i")
+          l_subkeys_k+=("'$l_i'")
           l_prefix_k="${l_subkeys_k[*]} " # Trailing space
           l_keys_k=()
           for l_kk in "${l_keys[@]}"
@@ -611,10 +611,10 @@ sysyaml_write_yaml_recurse() {
     if [[ -n "${sysyaml_anchors["$l_alias"]+_}" ]]
     then l_prefix="${sysyaml_anchors["$l_alias"]}"
     else echo "Warning: Anchor not found." >&2; return; fi; fi
-  l_type="${sysyaml_values["$l_prefix :type"]}"
+  l_type="${sysyaml_values["$l_prefix 'type'"]}"
   l_val="${sysyaml_values["$l_prefix"]}"
   if [[ -z "$l_type" ]]; then echo "Warning: Key not found." >&2; return; fi
-  l_tag="${sysyaml_values["$l_prefix :tag"]}"
+  l_tag="${sysyaml_values["$l_prefix 'tag'"]}"
   l_next_indent="$(("$l_indent"+2))"
   case "$l_context" in
     'm') l_indent="$l_next_indent";;
@@ -629,7 +629,7 @@ sysyaml_write_yaml_recurse() {
         if [[ "$l_key" == "$l_k" ]]; then continue; fi # Key shorter than prefix
         sysyaml_subkey 'l_key'
         if [[ -z "$l_key" ]]; then :
-        elif [[ "$l_key" == ':'* && ! "$l_key" =~ ^:_[0-9]+$ ]]; then : # Don't include metadata
+        elif [[ "$l_key" == "'"* && ! "$l_key" =~ ^\'_[0-9]+\'$ ]]; then : # Don't include metadata
         elif [[ "${l_visited["$l_key"]}" != true ]] # Ignore deeper subkeys
         then
           l_visited["$l_key"]=true
@@ -654,7 +654,7 @@ sysyaml_write_yaml_recurse() {
           l_keys_str="${l_keys_k[*]}"
           l_subkeys_str="${l_subkeys_k[*]}"
           unset 'IFS'
-          if [[ "$l_key" != ':_'* ]]
+          if [[ "$l_key" != "'_"* ]]
           then
             if [[ -n "$l_hyphen" ]]; then l_hyphen=''; l_indent="$l_next_indent"
               if [[ -n "$l_tag" ]]; then sysyaml_encode_tag 'l_tag'; fi; fi
@@ -669,13 +669,13 @@ sysyaml_write_yaml_recurse() {
               if [[ -n "$l_tag" ]]; then sysyaml_encode_tag 'l_tag'; fi
               printf "\\n%${l_indent}s" "$l_indent_space"; fi
             echo -n '?'
-            l_add=$'\n:key'
+            l_add=$'\n'\''key'\'''
             sysyaml_write_yaml_recurse "$l_keys_str" "$l_subkeys_str$l_add" "$l_next_indent" 'm'
-            if [[ -n "${sysyaml_values["$l_prefix_k:val :type"]+_}" ]]
+            if [[ -n "${sysyaml_values["$l_prefix_k:val 'type'"]+_}" ]]
             then
               printf "\\n%${l_indent}s" "$l_indent_space"
               echo -n ':'
-              l_add=$'\n:val'
+              l_add=$'\n'\''val'\'''
               sysyaml_write_yaml_recurse "$l_keys_str" "$l_subkeys_str$l_add" "$l_next_indent" 'm'
             fi; fi; fi; done
       if [[ "$l_first" == true ]]
@@ -690,13 +690,13 @@ sysyaml_write_yaml_recurse() {
           echo -n '{}'; fi; fi;;
     'seq')
       if [[ -n "$l_tag" ]]; then sysyaml_encode_tag 'l_tag'; fi
-      l_length="${sysyaml_values["$l_prefix :length"]}"
+      l_length="${sysyaml_values["$l_prefix 'length'"]}"
       if [[ -n "$l_length" ]]
       then
         for ((l_i = 0; l_i < "$l_length"; l_i++))
         do
           l_subkeys_k=("${l_subkeys[@]}") # Copy array
-          l_subkeys_k+=(":$l_i")
+          l_subkeys_k+=("'$l_i'")
           l_prefix_k="${l_subkeys_k[*]} " # Trailing space
           l_keys_k=()
           for l_kk in "${l_keys[@]}"
@@ -706,7 +706,7 @@ sysyaml_write_yaml_recurse() {
           l_keys_str="${l_keys_k[*]}"
           l_subkeys_str="${l_subkeys_k[*]}"
           unset 'IFS'
-          if [[ "${sysyaml_values["${l_prefix_k}:type"]}" == 'seq' ]]
+          if [[ "${sysyaml_values["${l_prefix_k}'type'"]}" == 'seq' ]]
           then
             if [[ "$l_i" -gt 0 && "$l_next_indent" -lt 2 ]]; then echo; fi
             if [[ "$l_i" -gt 0 || "$l_next_indent" -ge 2 ]]; then echo; fi
@@ -805,7 +805,7 @@ sysyaml_value() {
   
   # Check whether a value type is set
   unset 'IFS'; l_prefix="${n_subkeys[*]}" # No trailing space
-  l_type="${sysyaml_values["$l_prefix :type"]}"
+  l_type="${sysyaml_values["$l_prefix 'type'"]}"
   case "$l_type" in
     str|bool|int|float) return;; esac
   return 1
@@ -825,8 +825,8 @@ sysyaml_write_value() {
   
   # Print the value as-is
   unset 'IFS'; l_prefix="${n_subkeys[*]}" # No trailing space
-  l_type="${sysyaml_values["$l_prefix :type"]}"
-  l_tag="${sysyaml_values["$l_prefix :tag"]}"
+  l_type="${sysyaml_values["$l_prefix 'type'"]}"
+  l_tag="${sysyaml_values["$l_prefix 'tag'"]}"
   if [[ -z "$l_type" ]]; then echo "Warning: Value not found." >&2; return; fi
   case "$l_type" in
     str|bool|int|float)

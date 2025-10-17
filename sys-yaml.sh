@@ -9,9 +9,9 @@
 # Output: Every value is put in an associative array, yaml_values, using a merged key of all
 # nested subkeys, separated by spaces, and yaml_root as the implicit key to the root. Mapping
 # keys containing ", \, control characters, :, or space or which are empty are double-quoted.
-# Every key has a nested unquoted :type. Sequences use subkeys :<index> and also have :length.
-# For complex mappings, similarly to sequences there are :_<index> and :_length, with subkeys
-# :key and :val. Explicit tags are in :tag and aliases in :alias, for look-up in yaml_anchors.
+# Every key has a single-quoted subkey 'type'. Sequences have '<index>' and also 'length'. For
+# complex mappings, similarly to sequences there are '_<index>' and '_length', with subkeys
+# 'key' and 'val'. Tags are in 'tag'. Aliases are in 'alias', to be looked-up in yaml_anchors.
 # The function yaml_encode escapes values for JSON/YAML. For Bash strings, add 2nd arg. for $,
 # e.g.: value="${yaml_values["yaml key"]}"; echo -n 'key="'; yaml_encode 'value' '$'; echo '"'
 # Source: https://github.com/erikis/sys-yaml (MIT License); Copyright 2025 Erik Isaksson
@@ -75,11 +75,11 @@ yaml_read_json() { # YAML parser helper function: reads one line of JSON/flow sy
 yaml_set_key() { # YAML parser helper function: sets the value of yaml_key
   if [[ "$1" == '"'*'"' ]]; then yaml_key="${1:1:-1}"; yaml_decode 'yaml_key'
   else yaml_key="$1"; fi;                              yaml_key="$(yaml_encode 'yaml_key')"
-  if [[ "$yaml_key" =~ ^$|[\\:\ ] ]]; then yaml_key="\"$yaml_key\""; fi # Double-quote if needed
+  if [[ "$yaml_key" =~ ^$|[\\\'@\`\ ] ]]; then yaml_key="\"$yaml_key\""; fi # Double-quote
 }
 yaml_set_value() { # YAML parser helper function: sets a value and its type in yaml_values
   local k="$1"; if [[ -z "$3" ]]; then if [[ -z "${yaml_values["$k"]+_}" ]]; then # If unset
-    yaml_keys+=("$k"); fi; yaml_values["$k"]="$yaml_value"; fi; k="$1 :type" # Value if $3 == ''
+    yaml_keys+=("$k"); fi; yaml_values["$k"]="$yaml_value"; fi; k="$1 'type'" # Value if $3 == ''
   if [[ -z "${yaml_values["$k"]+_}" ]]; then yaml_keys+=("$k"); fi; yaml_values["$k"]="$2" # Type
 }
 yaml_set_complex() { # YAML parser helper function: sets a complex mapping
@@ -96,7 +96,7 @@ yaml_set() { # YAML parser helper function: sets a value in yaml_values
 }
 # Parse YAML in yaml_lines, placing values incl. metadata in yaml_values
 if [[ -n "$yaml_root" ]]; then yaml_subkeys+=("$yaml_root"); fi; yaml_indents+=('-1') # Add root
-if [[ -z "${yaml_values["$yaml_root :type"]+_}" ]] # If not already set, set default root type
+if [[ -z "${yaml_values["$yaml_root 'type'"]+_}" ]] # If not already set, set default root type
 then yaml_set_value "$yaml_root" 'null' '_'; fi                       # tag:yaml.org,2002:null
 yaml_lines+=($'#\n'); unset 'IFS'; for yaml_l in "${yaml_lines[@]}" # Loop over all YAML lines
 do # Inserted ignored and impossible final line $'#\n' to ensure block/JSON end will be detected
@@ -125,8 +125,7 @@ do # Inserted ignored and impossible final line $'#\n' to ensure block/JSON end 
         if [[ -n "$yaml_string" ]]; then yaml_style=' '; fi # Separate by spaces again
       else # Append current line
         if [[ "${#yaml_var[@]}" -gt 0 ]]; then yaml_var+=("$yaml_style"); fi
-        yaml_var+=("$yaml_string"); fi
-      continue
+        yaml_var+=("$yaml_string"); fi; continue
     else # If no longer inside a block scalar
       if [[ "$yaml_chomp" == '+' ]]; then yaml_var+=($'\n') # Whether to keep all \n
       else while [[ "${#yaml_var[@]}" -gt 0 && -z "${yaml_var[-1]%%$'\n'}" ]]
@@ -152,7 +151,7 @@ do # Inserted ignored and impossible final line $'#\n' to ensure block/JSON end 
   if [[ "$yaml_line" =~ ^[[:blank:]]*(#.*)?$ ]]; then : # Ignoring blank line/comment
   # Match the line against a regex for the full supported YAML syntax
   elif [[ "$yaml_line" =~ \
-    ^( *)([\?:] *)?(- *)?((\![^[:blank:]]+[[:blank:]]+)?[^:\"]+:|\"([^\\]*|\\.)*\":)?[[:blank:]]*(\
+    ^( *)([\?:] *)?(- *)?((\![^[:blank:]]+[[:blank:]]+)?[^\"]+:|\"([^\\]*|\\.)*\":)?[[:blank:]]*(\
     $ ignore )?((\*[^[:blank:]]+)|(([\!\&][^[:blank:]]+[[:blank:]]*)*)(\"(.*)\"|true|false|null|\
     $ |-?[0-9]+(\.[0-9]+)?([Ee][+-]?[0-9]+)?|(\||\>)[0-9+-]*|\{.*|\[.*)?)?[[:blank:]]*(#.*)?$ ]]
   then
@@ -180,41 +179,42 @@ do # Inserted ignored and impossible final line $'#\n' to ensure block/JSON end 
     if [[ -n "$yaml_key" ]]; then yaml_key="${yaml_key%':'}" # If key, trim colon
       if [[ -z "$yaml_ktag" ]]; then yaml_set_key "$yaml_key" # If key without tag
       else                     # If key with tag, convert to a complex mapping
-        yaml_length="${yaml_values["$yaml_prefix :_length"]:-0}"; if [[ "$yaml_length" -eq 0 ]]
+        yaml_length="${yaml_values["$yaml_prefix '_length'"]:-0}"; if [[ "$yaml_length" -eq 0 ]]
         then yaml_set_value "$yaml_prefix" 'map' '_'                  # tag:yaml.org,2002:map
-          yaml_keys+=("$yaml_prefix :_length"); fi
-        yaml_values["$yaml_prefix :_length"]="$(("$yaml_length"+1))" # Set the new length
-        yaml_set_complex ":_$yaml_length" ''; yaml_set "$yaml_prefix :key" "$yaml_key"
-        yaml_set "$yaml_prefix :key :tag" "$yaml_ktag"; yaml_set "$yaml_prefix :key :type" 'str'
-        yaml_key=':val'; fi; fi
+          yaml_keys+=("$yaml_prefix '_length'"); fi
+        yaml_values["$yaml_prefix '_length'"]="$(("$yaml_length"+1))" # Set the new length
+        yaml_set_complex "'_$yaml_length'" ''; yaml_set "$yaml_prefix 'key'" "$yaml_key"
+        yaml_set "$yaml_prefix 'key' 'tag'" "$yaml_ktag"; yaml_set "$yaml_prefix 'key' 'type'" 'str'
+        yaml_key="'val'"; fi; fi
     if [[ -n "$yaml_cx" ]]; then if [[ "$yaml_cx" == '?'* ]]
       then                     # If '?'/':' complex mapping          # If complex mapping key
-        yaml_length="${yaml_values["$yaml_prefix :_length"]:-0}"; if [[ "$yaml_length" -eq 0 ]]
+        yaml_length="${yaml_values["$yaml_prefix '_length'"]:-0}"; if [[ "$yaml_length" -eq 0 ]]
         then yaml_set_value "$yaml_prefix" 'map' '_'                  # tag:yaml.org,2002:map
-          yaml_keys+=("$yaml_prefix :_length"); fi
-        yaml_values["$yaml_prefix :_length"]="$(("$yaml_length"+1))" # Set the new length
-        yaml_set_complex ":_$yaml_length" ':key'
-      elif [[ "$yaml_previous" == ':_'* &&
-        -z "${yaml_values["$yaml_prefix $yaml_previous :val"]+_}" ]] # If complex mapping value
-      then yaml_set_complex "$yaml_previous" ':val'
+          yaml_keys+=("$yaml_prefix '_length'"); fi
+        yaml_values["$yaml_prefix '_length'"]="$(("$yaml_length"+1))" # Set the new length
+        yaml_set_complex "'_$yaml_length'" "'key'"
+      elif [[ "$yaml_previous" == "'_"* &&
+        -z "${yaml_values["$yaml_prefix $yaml_previous 'val'"]+_}" ]] # If complex mapping value
+      then yaml_set_complex "$yaml_previous" "'val'"
       else # If the colon seems to actually be for an unquoted empty-string key
         yaml_key='""'; yaml_indent="$(("${#BASH_REMATCH[1]}"+"${#yaml_hyphen}"))"; fi; fi
     if [[ -n "$yaml_hyphen" ]]
     then                       # If there is a hyphen, then it means that this is a sequence
-      yaml_length="${yaml_values["$yaml_prefix :length"]:-0}"; if [[ "$yaml_length" -eq 0 ]]
+      yaml_length="${yaml_values["$yaml_prefix 'length'"]:-0}"; if [[ "$yaml_length" -eq 0 ]]
       then yaml_set_value "$yaml_prefix" 'seq' '_'                    # tag:yaml.org,2002:seq
-        yaml_keys+=("$yaml_prefix :length"); fi
-      yaml_values["$yaml_prefix :length"]="$(("$yaml_length"+1))" # Set the new length
-      yaml_prefix="$yaml_prefix :$yaml_length"
-      yaml_subkeys+=(":$yaml_length"); yaml_indents+=("$yaml_indent")
-    elif [[ -n "${yaml_values["$yaml_prefix :length"]+_}" ]]
+        yaml_keys+=("$yaml_prefix 'length'"); fi
+      yaml_values["$yaml_prefix 'length'"]="$(("$yaml_length"+1))" # Set the new length
+      yaml_prefix="$yaml_prefix '$yaml_length'"
+      yaml_subkeys+=("'$yaml_length'"); yaml_indents+=("$yaml_indent")
+    elif [[ -n "${yaml_values["$yaml_prefix 'length'"]+_}" ]]
     then                       # If still on a sequence node
-      yaml_length="${yaml_values["$yaml_prefix :length"]}"
-      yaml_prefix="$yaml_prefix :$(("$yaml_length"-1))"; fi # Get the current index
+      yaml_length="${yaml_values["$yaml_prefix 'length'"]}"; yaml_length="$(("$yaml_length"-1))"
+      yaml_prefix="$yaml_prefix '$yaml_length'" # Use the current index (not next one)
+      yaml_subkeys+=("'$yaml_length'"); yaml_indents+=("$yaml_indent"); fi
     if [[ -n "$yaml_key" ]]    # If there is a key, then it might mean that this is a map
     then yaml_set_value "$yaml_prefix" 'map' '_'                      # tag:yaml.org,2002:map
       yaml_prefix_key="$yaml_prefix $yaml_key"; else yaml_prefix_key="$yaml_prefix"; fi
-    if [[ -n "$yaml_vtag" ]]; then yaml_set "$yaml_prefix_key :tag" "$yaml_vtag"; fi
+    if [[ -n "$yaml_vtag" ]]; then yaml_set "$yaml_prefix_key 'tag'" "$yaml_vtag"; fi
     if [[ -n "$yaml_anchor" ]]; then # shellcheck disable=SC2034
       yaml_anchors["$yaml_anchor"]="$yaml_prefix_key"; fi
     if [[ -n "$yaml_alias" ]]; then yaml_set "$yaml_prefix_key :alias" "${yaml_alias#'*'}"; fi
