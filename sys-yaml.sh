@@ -8,7 +8,7 @@
 # [  ]*[(?|:) ][- ][[! ](k|"k"):][ ][*|[& ][! ]("s"|<n>|true|false|(||>)[d][+|-]|[]|{})][ #c]
 # Output: Every value is put in an associative array, yaml_values, using a merged key of all
 # nested subkeys, separated by spaces, and yaml_root as the implicit key to the root. Mapping
-# keys containing ", \, control characters, :, or space or which are empty are double-quoted.
+# keys containing ", \, @, ', `, control chars, or space or which are empty are double-quoted.
 # Every key has a single-quoted subkey 'type'. Sequences have '<index>' and also 'length'. For
 # complex mappings, similarly to sequences there are '_<index>' and '_length', with subkeys
 # 'key' and 'val'. Tags are in 'tag'. Aliases are in 'alias', to be looked-up in yaml_anchors.

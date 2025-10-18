@@ -571,7 +571,7 @@ sysyaml_resolve_recurse() {
               "$l_anchors" "$l_root_key$l_key 'key'"
             if [[ -n "${sysyaml_values["$l_prefix_k'val' 'type'"]+_}" ]]
             then
-              sysyaml_resolve_recurse "$l_keys_str" "$l_subkeys_str$l_add"$'\n'\''val'\''' \
+              sysyaml_resolve_recurse "$l_keys_str" "$l_subkeys_str"$'\n'\''val'\''' \
                 "$l_anchors" "$l_root_key$l_key 'val'"
             fi; fi; fi; done;;
     'seq')
@@ -1087,7 +1087,10 @@ then
   }
   print_help() {
     print_unindent '    ' << '    EOF'
-    Parse YAML files and write values to files as env. variables, JSON, YAML, and other formats.
+    Parse limited YAML and write values to files as env. variables, JSON, YAML, and other formats.
+    
+    Limited YAML: Keys must be unquoted or double-quoted. String values must be double-quoted.
+    Values must be valid JSON, including flow mappings and sequences. Block scalars are supported.
     
     All options can be used multiple times and are processed in the order in which they are given,
     except for --help, --version, --verbose, and --jq.

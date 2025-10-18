@@ -119,7 +119,10 @@ Recommended: `apt install jq xxd`
 
 ```
 Usage: sys-yaml [OPTION...]
-Parse YAML files and write values to files as env. variables, JSON, YAML, and other formats.
+Parse limited YAML and write values to files as env. variables, JSON, YAML, and other formats.
+
+Limited YAML: Keys must be unquoted or double-quoted. String values must be double-quoted.
+Values must be valid JSON, including flow mappings and sequences. Block scalars are supported.
 
 All options can be used multiple times and are processed in the order in which they are given,
 except for --help, --version, --verbose, and --jq.
