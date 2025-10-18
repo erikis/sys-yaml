@@ -138,6 +138,7 @@ Options:
   --compress=, -g <gzip>        command for compressing binary data, or - for none, default -
   --decompress=, -m <gunzip>    command for decompress. binary data, or - for none, default -
   --clear, -c                   remove all current values, restoring initial state
+  --resolve, -R                 replace current values with root where aliases are resolved
   --parse, -p                   parse one YAML document from input file
   --read, -b                    read values from input file, previously written using --write
   --write, -d                   write values to output file, using one key-value per line
