@@ -77,10 +77,10 @@ sysyaml_parse() {
   yaml_jq="${sysyaml_params['jq']}"
   yaml_v="${sysyaml_params['verbose']}"
   . "$sysyaml_script_dir/sys-yaml.sh" # Just source it, as it doesn't have a parse function to call
-  sysyaml_params['invalid']="$yaml_invalid"
+  if [[ "$yaml_invalid" == true ]]; then sysyaml_params['invalid']=true; fi
 }
 
-# Resets values and related arrays, in order to return to the initial state.
+# Resets values and related arrays and returns to the initial state.
 sysyaml_clear() {
   unset 'sysyaml_values' 'sysyaml_keys' 'sysyaml_anchors' 'sysyaml_prefixes'
   declare -gA sysyaml_values sysyaml_anchors sysyaml_prefixes
@@ -92,6 +92,9 @@ sysyaml_clear() {
 # Parameters that can be set:
 #  - verbose (set true to enable verbose parser output of values being added, default false)
 #  - jq (use jq for piping JSON and escaping strings, default 'jq' if found, false to disable)
+# Parameters that should not be set manually:
+#  - invalid (set to true by sysyaml_parse if invalid/unsupported YAML was parsed)
+#  - yaml (set to the YAML version by sysyaml_line)
 sysyaml_param() {
   if [[ "$#" -gt 0 ]]
   then
@@ -189,10 +192,18 @@ sysyaml_prefix() {
 }
 
 # Reads one YAML line in $2 (nameref) and adds it to the array in $1 (nameref).
-# $3 (nameref) is a flag for whether currently in a document.
+# $3 (nameref) is a flag for whether currently in a document, should be initially empty.
 # Returns non-zero exit code if reading lines should stop due to end of YAML document.
 sysyaml_line() {
   local -n n_lines="$1" n_line="$2" n_doc="$3"
+  local l_value
+  if [[ -z "$n_doc" ]] # If flag is empty, initialize
+  then
+    n_doc=false
+    unset "sysyaml_params['yaml']" # Clear any YAML version set before
+    # Prefixes are not cleared because existing prefixes may need to be used when writing.
+    # Hence, if there are multiple input files, tags should be set in an initial file.
+  fi
   # To avoid ambiguity, be somewhat more strict than the specification
   case "${n_line:0:1}" in
     '-') # Full line must be '---' (and possibly spaces/tabs/comment), not just beginning
@@ -203,19 +214,30 @@ sysyaml_line() {
       else n_lines+=("$n_line"); fi;;
     '.') # Full line must be '...' (and possibly spaces/tabs/comment), not just beginning
       if [[ "$n_line" =~ ^\.\.\.[[:blank:]]*(#.*)?$ ]]
-      then n_doc=false; return 9
+      then n_doc=false; return 9 # Special exit code 9 for document end
       else n_lines+=("$n_line"); fi;;
     '%') # Directive name must be [A-Z][A-Z0-9_]* and not directly followed by :
       if [[ "$n_doc" != true && "$n_line" =~ \
         ^%([A-Z][A-Z0-9_]*)(([[:blank:]]+[^#[:blank:]][^[:blank:]]*)*)[[:blank:]]*(#.*)?$ ]]
-      then case "${BASH_REMATCH[1]}" in
+      then
+        l_value="${BASH_REMATCH[2]}"; l_value="${l_value#' '}"
+        case "${BASH_REMATCH[1]}" in
         'YAML')
-          if [[ "${BASH_REMATCH[2]}" != ' 1.2' ]]
-          then echo "Warning: Not YAML version 1.2." >&2; fi;;
+          if [[ -n "${sysyaml_params['yaml']+_}" ]]
+          then echo "Error: YAML version already set." >&2; return 1
+          elif [[ "$l_value" != '1.'* ]]
+          then echo "Error: Not YAML version 1.x." >&2; return 1
+          elif [[ "$l_value" != '1.2' ]]
+          then echo "Warning: Not YAML version 1.2." >&2; fi
+          sysyaml_params['yaml']="$l_value";;
         'TAG')
           if [[ "${BASH_REMATCH[2]}" =~ \
             ^[[:blank:]]+(\![a-zA-Z0-9-]+\!|\!\!?)[[:blank:]]+([^[:blank:]]+)$ ]]
-          then sysyaml_prefix "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"; fi;;
+          then
+            if [[ -n "${sysyaml_prefixes["${BASH_REMATCH[1]}"]+_}" ]]
+            then echo "Error: Tag handle already set." >&2; return 1; fi
+            sysyaml_prefix "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+          fi;;
       esac; else n_lines+=("$n_line"); fi;;
     *)
       n_lines+=("$n_line");; esac
@@ -1209,7 +1231,7 @@ then
   decompress_cmd='-'
   # shellcheck disable=SC2034 # "not in use" but is actually used via namerefs
   in_lines=()
-  in_doc=false
+  in_doc=''
   # shellcheck disable=SC2034
   declare -a subkeys
   # sysyaml_write_conf, sysyaml_write_json, and sysyaml_write_yaml require a
@@ -1244,7 +1266,7 @@ then
         else exec 10<"$in_file"; fi
         in_lines=()
         # shellcheck disable=SC2034
-        in_doc=false
+        in_doc=''
         ;;
       -o|--out)
         out_file="${option_value:-"-"}"
@@ -1282,7 +1304,8 @@ then
         IFS='' # Otherwise line indentation won't be preserved
         # shellcheck disable=SC2034
         while read -r in_line <&10
-        do sysyaml_line 'in_lines' 'in_line' 'in_doc' || break; done
+        do sysyaml_line 'in_lines' 'in_line' 'in_doc' ||
+          if [[ "$?" -eq 9 ]]; then break; else exit 3; fi done # Use exit code 3 for YAML errors
         unset 'IFS'
         sysyaml_parse 'in_lines' "$root_key"
         in_lines=()

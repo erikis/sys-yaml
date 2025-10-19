@@ -48,7 +48,7 @@ my_text: |
   Second line.
 ```
 
-Full supported syntax, with k=key, s=string, n=number (integer or float), d=digit 1-9, c=comment:
+Complete limited YAML syntax, with k=key, s=string, n=number (integer or float), d=digit 1-9, c=comment:
 
 ```
 [  ]*[(?|:) ][- ][[! ](k|"k"):][ ][*|[& ][! ]("s"|<n>|true|false|(||>)[d][+|-]|[]|{})][ #c]
@@ -56,7 +56,13 @@ Full supported syntax, with k=key, s=string, n=number (integer or float), d=digi
 
 `?` and `:` (at the start) are for a complex mapping's key and value, respectively. `!` (e.g., `!!str`) is for a tag and can be used for a key and/or a value. `&` and `*` are for an anchor and alias, e.g., `&reuse` and `*reuse`, where the former is the source to be re-used and the latter its destination. `|` and `>` are for block scalars (indented text contents below the line, with `>` for folding single line-breaks into spaces), with the optional digit indicating how much further contents are indented (by default it's detected) and the optional `+` or `-` for including or trimming extra trailing newlines, respectively. `{}` and `[]` are for _flow_ mappings and sequences, respectively, and can be any valid JSON object or array. They are also necessary in order to indicate an empty mapping or sequence, as a mapping or sequence without keys or items otherwise becomes no value (i.e., _null_).
 
-Finally, directives (`%YAML` and `%TAG`) and directives/document end markers (`---`/`...`) are supported when parsing using the CLI. When writing environment variables, JSON, or YAML, aliases are transparently resolved to their anchors. When writing YAML, tag handles are resolved to their prefixes, if available.
+Syntax excluding anchors and aliases, if the parser code is used directly in which case aliases are not automatically resolved:
+
+```
+[  ]*[(?|:) ][- ][[! ](k|"k"):][ ][[! ]("s"|<n>|true|false|(||>)[d][+|-]|[]|{})][ #c]
+```
+
+Finally, directives (`%YAML` and `%TAG`) and directives/document end markers (`---`/`...`) are supported when parsing using the CLI. When writing environment variables, JSON, or YAML, aliases are transparently resolved to their anchors (assuming that there are no cycles). When writing YAML, tag handles are resolved to their prefixes, if available.
 
 
 ## Examples
@@ -156,6 +162,18 @@ Options:
   --subkeys-encode=, -e <key>   encode (i.e., double-quote if needed) and add subkey(s)
 ```
 
+## Parser
+
+### sys-yaml.sh
+
+The parser code in [sys-yaml.sh](sys-yaml.sh) will never support any YAML features beyond YAML version 1.2.2. If new features are going to be supported, it will be using code in another file.
+
+When using the parser code directly, use a version that is linked below, because the file in the main branch might be in development:
+
+- (unreleased, TODO: write date and add link when released), Sys-YAML 1.0.0-dev: Initial version.
+
+Only Sys-YAML versions in which the parser code was modified are listed.
+
 ## Limited YAML
 
 This section goes into more detail about the subset of YAML that is implemented. It may be worthwhile reading in case of interest in this concept of "limited" YAML, e.g., for constraining one's use of the YAML syntax and why (with inspiration from the book "JavaScript: The Good Parts") or for creating other implementations.
@@ -164,7 +182,7 @@ Sys-YAML implements [YAML 1.2](https://yaml.org/spec/1.2.2/) ([RFC 9512](https:/
 
 1. String values must always be double-quoted (\"...\"), like in [JSON](https://www.json.org/) ([RFC 8259](https://datatracker.ietf.org/doc/html/rfc8259)). Mapping keys must be either unquoted (plain) or double-quoted. However, even when keys are unquoted, they are always parsed as strings. Keys which would need to be escaped if they were JSON strings should be double-quoted and escaped according to JSON.
     * **Rationale:** YAML's syntax for keys, mappings, and sequences is convenient and powerful, but the different ways of quoting and not quoting string values might be confusing. Learning the intricacies of each method could take a long time. There is a risk of string values, and keys, being interpreted as unintended types, e.g., booleans. JSON is the opposite: writing keys and structuring objects and arrays is cumbersome to do by hand, but writing string values is arguably quite simple, except if multi-line or long.
-    * **Workarounds:** Double-quote all string values. For multi-line string values, use block scalars (`|` or `>`). In unquoted mapping keys, only use characters that would not need to be escaped in JSON strings, i.e., not `"`, `\`, and control characters such as tabs. Also, don't use `'`, `@`, or `` ` ``, as these characters are used or reserved in YAML. That is, for YAML compatibility and conformance, keys containing the latter three characters need to be double-quoted, but authors may choose to ignore this for input to Sys-YAML, while being aware of the risk of incompatibility. Sys-YAML additionally double-quotes keys which contain spaces or which are empty (c.f., command-line arguments), because it merges nested keys ("subkeys") into space-separated strings, so authoring YAML in this way too may reduce confusion. Immediately after a complex mapping key, a `:` at the start of the line instead indicates a complex mapping value, so in that case if an empty-string key is intended it must be double-quoted.  In all other cases, keys should remain unquoted.
+    * **Workarounds:** Double-quote all string values. For multi-line string values, use block scalars (`|` or `>`). In unquoted mapping keys, only use characters that would not need to be escaped in JSON strings, i.e., not `"`, `\`, and control characters such as tabs. Also, don't use `'`, `@`, or `` ` ``, as these characters are used or reserved in YAML. That is, for YAML compatibility and conformance, keys containing the latter three characters need to be double-quoted, but authors may choose to ignore this for input to Sys-YAML, while being aware of the risk of incompatibility. Sys-YAML additionally double-quotes keys which contain spaces or which are empty (c.f., command-line arguments), because it merges nested keys ("subkeys") into space-separated strings, so authoring YAML in this way too may reduce confusion. Immediately after a complex mapping key, a `:` at the start of the line instead indicates a complex mapping value, so in that case if an empty-string key is intended it must be double-quoted.  In all other cases, keys should remain unquoted. Alternatively, first use another YAML parser and writer, configured to double-quote all string values, not use single-quotes for keys, and not use flow syntax unless the output is valid JSON.
     * **Exceptions:** It's possible to write a long, double-quoted string across multiple lines, by using `\` at the end of the line to escape the line-break, even though that's not allowed in JSON, because logically, it's still on a single YAML line.
 2. Values and double-quoted keys must conform to JSON. Flow mappings and sequences (`{...}` and `[...]` syntax) embed valid JSON objects/arrays as values for mappings and sequences and their contents, if any, are not parsed directly as YAML. If there are no contents, they are regarded as empty mappings/sequences (`{}`/`[]`).
     * **Rationale:** JSON is familiar to many and its syntax for values is mostly easy to understand and sufficient. YAML has a strength in being a superset of JSON, as it's therefore possible to embed JSON values, and a JSON document is also a valid YAML document. But YAML also allows non-JSON syntax within those values and, e.g., additional escape sequences, so that those parts of a YAML document are no longer valid JSON. Another way of looking at YAML is as a format for the structuring and embedding of JSON, or perhaps a superstructure. As such, JSON syntax can exist as embedded values within YAML. When a YAML document is then converted to JSON, the structure is converted but the embeddings (i.e., all values of all types) are included as they are, because they're already valid JSON.
@@ -182,6 +200,10 @@ Sys-YAML implements [YAML 1.2](https://yaml.org/spec/1.2.2/) ([RFC 9512](https:/
     * **Rationale:** Allowing the marker to co-exist on the same line with data causes ambiguity, as the same characters can be part of a key (or a value, if unquoted strings are allowed), but if other data and unquoted string values are both not allowed, then a marker is clearly not a key/value. It also causes problems with line-based parsing, as when a document ends there might already be data from the next document on the same line, which would need to be stored for the parsing of the next document.
    * **Workarounds:** Add a newline immediately after the marker.
    * **Exceptions:** Spaces/tabs and/or a comment are possible on the same line after the marker.
+6. New features in YAML beyond YAML 1.2.2 must not be used with Sys-YAML v1.x.x.
+   * **Rationale:** JSON hasn't added any new features and is presumably not going to. This makes it a stable format for data interchange. As for YAML, current parsers might not be able to parse future data. Also, `@` being a character reserved for future use causes an issue for YAML-LD, as JSON-LD makes use of that character in keys, therefore requiring quoting of all such keys when used in YAML or having to remap such keys from their `@` versions to, e.g., `$`.
+   * **Workarounds:** Don't use new YAML features, if there are any, with Sys-YAML v1.x.x. If YAML is used in a way that Sys-YAML parses in a non-conformant way, such as skipping the space after `:` after an unquoted key or inclusion of `'`, `@`, or `` ` `` in unquoted keys, parse it using Sys-YAML first and let it output YAML if needed for use with other parsers.
+   * **Exceptions:** If there is ever a new major version of Sys-YAML, it might support new YAML features, but only with the appropriate `%YAML` version directive.
 
 ## License
 
