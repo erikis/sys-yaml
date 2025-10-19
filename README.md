@@ -10,6 +10,10 @@ Limited [YAML](https://yaml.org/spec/1.2.2/) with [JSON](https://www.json.org/)-
 - **Function [library](sys-yaml)** for using the parser more conveniently as well as writing YAML and other formats. Also pure Bash, except jq integration for JSON formatting and improved long string encoding performance, as well as file import/export.
 - **Command-line interface** for parsing YAML files and writing values to files as environment variables, JSON, YAML, and other formats.
 
+## Motivation
+
+I wanted something that is nicer to write than environment variables or JSON and CSV files, for basic system management needs.
+
 ## Supported YAML syntax
 
 Basic syntax, per line:
@@ -63,7 +67,6 @@ Syntax excluding anchors and aliases, if the parser code is used directly in whi
 ```
 
 Finally, directives (`%YAML` and `%TAG`) and directives/document end markers (`---`/`...`) are supported when parsing using the CLI. When writing environment variables, JSON, or YAML, aliases are transparently resolved to their anchors (assuming that there are no cycles). When writing YAML, tag handles are resolved to their prefixes, if available.
-
 
 ## Examples
 
