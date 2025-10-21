@@ -815,7 +815,10 @@ sysyaml_write_yaml_recurse() {
   if [[ "$l_indent" -le 0 ]]; then l_indent=0; l_indent_space=''; fi # Ensure no indent if <= 0
   case "$l_type" in
     'map')
-      if [[ -n "$l_tag" && -z "$l_hyphen" ]]; then sysyaml_encode_tag 'l_tag'; fi
+      if [[ -n "$l_tag" && -z "$l_hyphen" ]]
+      then
+          if [[ "$l_context" == 'm' ]]; then echo -n ' '; fi
+          sysyaml_encode_tag 'l_tag'; fi
       for l_k in "${l_keys[@]}"
       do
         l_key="${l_k#"$l_prefix "}" # Trim prefix and leading space
@@ -831,19 +834,20 @@ sysyaml_write_yaml_recurse() {
           l_prefix_k="${l_subkeys_k[*]} " # Trailing space
           l_keys_k=()
           for l_kk in "${l_keys[@]}"
-            do if [[ "$l_kk" == "$l_prefix_k"* ]]; then l_keys_k+=("$l_kk"); fi; done #; fi
+            do if [[ "$l_kk" == "$l_prefix_k"* ]]; then l_keys_k+=("$l_kk"); fi; done
           if [[ "$l_first" != true && "$l_next_indent" -lt 2 ]]; then echo; fi
           if [[ "$l_first" !=  true || "$l_next_indent" -ge 2 ]]; then echo; fi
+          if [[ "$l_first" ==  true && "$l_next_indent" -lt 2 && -n "$l_tag" ]]; then echo; fi
           if [[ "$l_first" == true ]]; then l_first=false; fi
           printf "%${l_indent}s%s" "$l_indent_space" "$l_hyphen"
+          if [[ -n "$l_tag" && -n "$l_hyphen" ]]; then sysyaml_encode_tag 'l_tag'; fi
           IFS=$'\n'
           l_keys_str="${l_keys_k[*]}"
           l_subkeys_str="${l_subkeys_k[*]}"
           unset 'IFS'
           if [[ "$l_key" != "'_"* ]]
           then
-            if [[ -n "$l_hyphen" ]]; then l_hyphen=''; l_indent="$l_next_indent"
-              if [[ -n "$l_tag" ]]; then sysyaml_encode_tag 'l_tag'; fi; fi
+            if [[ -n "$l_hyphen" ]]; then l_hyphen=''; l_indent="$l_next_indent"; fi
             echo -n "$l_key:"
             IFS=$'\n'
             l_keys_str="${l_keys_k[*]}"
@@ -853,7 +857,6 @@ sysyaml_write_yaml_recurse() {
               "$l_next_indent" 'm'
           else
             if [[ -n "$l_hyphen" ]]; then l_hyphen=''; l_indent="$l_next_indent"
-              if [[ -n "$l_tag" ]]; then sysyaml_encode_tag 'l_tag'; fi
               printf "\\n%${l_indent}s" "$l_indent_space"; fi
             echo -n '?'
             sysyaml_write_yaml_recurse "$l_keys_str" "$l_subkeys_str"$'\n'\''key'\''' \
@@ -874,11 +877,15 @@ sysyaml_write_yaml_recurse() {
             'm') echo -n ' ';;
             's') printf "\\n%${l_indent}s%s" "$l_indent_space" "$l_hyphen";;
           esac
+          if [[ -n "$l_tag" && -n "$l_hyphen" ]]; then sysyaml_encode_tag 'l_tag'; fi
           echo -n '{}'; fi; fi;;
     'seq')
       if [[ "$l_context" == 's' ]]
-      then printf "\\n%${l_indent}s%s" "$l_indent_space" '-'; fi # Seq. in a seq needs hyphen
-      if [[ -n "$l_tag" ]]; then sysyaml_encode_tag 'l_tag'; fi
+      then printf "\\n%${l_indent}s%s" "$l_indent_space" '- '; fi # Seq. in a seq needs hyphen
+      if [[ -n "$l_tag" ]]
+      then
+          if [[ "$l_context" == 'm' ]]; then echo -n ' '; fi
+          sysyaml_encode_tag 'l_tag'; fi
       l_length="${sysyaml_values["$l_prefix 'length'"]}"
       if [[ -n "$l_length" ]]
       then
@@ -912,7 +919,7 @@ sysyaml_write_yaml_recurse() {
         'm') echo -n ' ';;
         's') printf "\\n%${l_indent}s%s" "$l_indent_space" "$l_hyphen";;
       esac
-      if [[ -n "$l_tag" ]]; then sysyaml_encode_tag 'l_tag'; fi
+      if [[ -n "$l_tag" ]]; then sysyaml_encode_tag 'l_tag'; echo -n ' '; fi
       if [[ "$l_val" == *$'\n'* ]]
       then
         echo -n '|'
@@ -936,7 +943,7 @@ sysyaml_write_yaml_recurse() {
         'm') echo -n ' ';;
         's') printf "\\n%${l_indent}s%s" "$l_indent_space" "$l_hyphen";;
       esac
-      if [[ -n "$l_tag" ]]; then sysyaml_encode_tag 'l_tag'; fi
+      if [[ -n "$l_tag" ]]; then sysyaml_encode_tag 'l_tag'; echo -n ' '; fi
       echo -n "$l_val";; # Boolean or number value, assumed to be safe
     'null')
       case "$l_context" in
@@ -1063,8 +1070,7 @@ sysyaml_encode_subkey() {
   if [[ "$n_subkey" =~ ^$|[\\:\ ] ]]; then n_subkey="\"$n_subkey\""; fi
 }
 
-# Print a tag in $1 (nameref) followed by a space to stdout.
-# First the prefix is resolved if possible.
+# Print a tag in $1 (nameref) to stdout. First, the prefix is resolved if possible.
 sysyaml_encode_tag() {
   local -n n_tag="$1"
   if [[ -z "$n_tag" ]]; then return; fi # If no tag, don't print anything
@@ -1073,10 +1079,10 @@ sysyaml_encode_tag() {
     ! ("${BASH_REMATCH[1]}" == '!' && "${BASH_REMATCH[2]}" == '<'*) && \
     -n "${sysyaml_prefixes["${BASH_REMATCH[1]}"]+_}" ]]
   then
-    echo -n "${sysyaml_prefixes["${BASH_REMATCH[1]}"]}${BASH_REMATCH[2]} "
+    echo -n "!<${sysyaml_prefixes["${BASH_REMATCH[1]}"]}${BASH_REMATCH[2]}>"
     return; fi
   # Or: Print tag as-is
-  echo -n "$n_tag "
+  echo -n "$n_tag"
 }
 
 # If string in $1 (nameref) is in double-quotes, then unquote and unescape it in place.
