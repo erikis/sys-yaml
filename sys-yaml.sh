@@ -3,7 +3,7 @@
 # values must be double-quoted. Values and double-quoted keys must conform to JSON. For JSON
 # compat., explicit null is equivalant to no value and {}/[] "flow" syntax embeds valid JSON.
 # | (or >) embeds (folded) text below, with indent d and/or +/- to keep/cut trailing newlines.
-# Complex mappings must use initial ?/:, i.e., if in a sequence, use newline, indent 2 spaces.
+# A sequence must not be in a sequence on the same line; complex mappings must start with ?/:.
 # Supported syntax, with k=key, s=string, n=number (integer or float), d=digit 1-9, c=comment:
 # [  ]*[(?|:) ][- ][[! ](k|"k"):][ ][*|[& ][! ]("s"|<n>|true|false|(||>)[d][+|-]|[]|{})][ #c]
 # Output: Every value is put in an associative array, yaml_values, using a merged key of all
