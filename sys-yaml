@@ -335,9 +335,10 @@ sysyaml_write_conf_() {
       if [[ -z "$l_root_prefix" ]]; then l_name="$l_k"
       elif [[ "$l_k" == "$l_subkeys"  ]]; then l_name="$l_root_key"
       else l_name="$l_root_key${l_k#"$l_root_prefix"}"; fi
-      # Only lower-case subkeys a-z0-9_, no quotes or double-underscore
-      if [[ ! "$l_name" =~ ^([a-z0-9\ ]+(_|\'[0-9]+\')?)+$ ]]; then continue; fi
-      # Make key upper-case, replace ':' with '_' and ' ' with '__'
+      # Only subkeys which are lower-case a-z0-9_ without quotes and double-underscore
+      # However, sequences need to also be allowed with '[0-9]+' and 'length'
+      if [[ ! "$l_name" =~ ^([a-z0-9\ ]+(_|\'[0-9]+\'|\'length\')?)+$ ]]; then continue; fi
+      # Make key upper-case, remove single-quotes and replace ' ' with '__'
       l_name="${l_name^^}"; l_name="${l_name//\'/}"; l_name="${l_name// /__}"
       echo -n "$l_name"; echo -n '='
       l_val="${sysyaml_values["$l_k"]}"
@@ -408,9 +409,10 @@ sysyaml_write_conf_recurse() {
   l_val="${sysyaml_values["$l_prefix"]}"
   if [[ -z "$l_type" ]]; then echo "Warning: Key not found." >&2; return; fi
   # Only subkeys which are lower-case a-z0-9_ without quotes and double-underscore
-  # However, sequences need to also be allowed with :[0-9]+
+  # However, sequences need to also be allowed with '[0-9]+' and 'length'
   if [[ ! "$l_root_key" =~ ^([a-z0-9\ ]+(_|\'[0-9]+\')?)+$ ]]
   then return; fi
+  # Make key upper-case, remove single-quotes and replace ' ' with '__'
   l_name="${l_root_key^^}"; l_name="${l_name//\'/}"; l_name="${l_name// /__}"
   case "$l_type" in
     'map')
@@ -446,6 +448,7 @@ sysyaml_write_conf_recurse() {
       l_length="${sysyaml_values["$l_prefix 'length'"]}"
       if [[ -n "$l_length" ]]
       then
+        echo -n "${l_name}__LENGTH="; sysyaml_encode 'l_length' '$'; echo # Also escape $ to \$
         if [[ -n "$l_root_key" ]]; then l_root_key="$l_root_key "; fi
         for ((l_i = 0; l_i < "$l_length"; l_i++))
         do
