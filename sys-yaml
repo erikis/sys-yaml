@@ -126,9 +126,8 @@ sysyaml_subkey() {
       && n_val="${BASH_REMATCH[1]}" || n_val="${n_val:1}"
   elif [[ "$n_val" == *' '* ]]
   then
-    n_val="${n_val%%[[:blank:]]*}" # Trim after the first word
-  else
-    n_val=''; fi
+    n_val="${n_val%%[[:blank:]]*}"; fi # Trim after the first word
+  # Otherwise, leave as-is
 }
 
 # Splits space-separated string in $2 into raw subkeys, assign as array or add to $1 (nameref).
@@ -163,6 +162,29 @@ sysyaml_subkeys_clear() {
   local -n n_subkeys_="$1"
   unset 'n_subkeys_'
   n_subkeys_+=()
+}
+
+# Clears array in $2 (nameref) and adds subkeys of key specified as subkeys array in $1 (nameref).
+# This implementation requires sysyaml_subkey.
+sysyaml_list() {
+  # shellcheck disable=SC2178
+  local -n n_subkeys="$1" n_nested="$2"
+  local l_k l_prefix l_subkey
+  local -A l_visited
+  unset 'IFS'; l_prefix="${n_subkeys[*]}"
+  n_nested=()
+  if [[ -n "$l_prefix" ]]; then l_prefix="$l_prefix "; fi
+  for l_k in "${sysyaml_keys[@]}"
+  do
+    if [[ "$l_k" == "$l_prefix"* ]]
+    then
+      l_subkey="${l_k#"$l_prefix"}"
+      sysyaml_subkey 'l_subkey'
+      if [[ "${l_visited["$l_subkey"]}" != true ]]
+      then
+        l_visited["$l_subkey"]=true
+        n_nested+=("$l_subkey")
+      fi; fi; done
 }
 
 # For key $1 sets value $2 (nameref).
