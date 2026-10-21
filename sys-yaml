@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # MIT License
 #
-# Copyright (c) 2025 Erik Isaksson, https://github.com/erikis
+# Copyright (c) 2025-2026 Erik Isaksson, https://github.com/erikis
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -228,15 +228,28 @@ sysyaml_line() {
   fi
   # To avoid ambiguity, be somewhat more strict than the specification
   case "${n_line:0:1}" in
-    '-') # Full line must be '---' (and possibly spaces/tabs/comment), not just beginning
-      if [[ "$n_line" =~ ^---[[:blank:]]*(#.*)?$ ]]
-      then if [[ "$n_doc" != true ]]
-        then n_lines=(); n_doc=true
-        else return 8; fi
-      else n_lines+=("$n_line"); fi;;
-    '.') # Full line must be '...' (and possibly spaces/tabs/comment), not just beginning
-      if [[ "$n_line" =~ ^\.\.\.[[:blank:]]*(#.*)?$ ]]
-      then n_doc=false; return 9 # Special exit code 9 for document end
+    '-') # Line must be '---' and possibly spaces/tabs and a tag and/or scalar and/or a comment
+      if [[ "$n_line" =~ ^---(([[:blank:]]+((\![^[:blank:]]+[[:blank:]]*)?(\"(.*)\"|\
+        $ |true|false|null|-?[0-9]+(\.[0-9]+)?([Ee][+-]?[0-9]+)?|(\||\>)[0-9+-]*|\
+        $ |\{.*|\[.*)?))?[[:blank:]]*(#.*)?)?$ ]]
+      then
+        if [[ "$n_doc" != true ]]
+        then
+          n_doc=true
+          if [[ -n "${BASH_REMATCH[3]}" ]]; then n_lines=("${BASH_REMATCH[3]}")
+          else n_lines=(); fi
+        else
+          n_line="${BASH_REMATCH[3]}" # Any content is first line of new document
+          return 9; fi # Handle document start while already in a document
+      elif [[ "$n_line" =~ ^--- ]]
+      then echo "Error: Invalid directives end marker." >&2; return 1
+      else
+        n_lines+=("$n_line"); fi;;
+    '.') # Line must be '...' possibly followed by spaces/tabs and a comment
+      if [[ "$n_line" =~ ^\.\.\.([[:blank:]]+(#.*)?)?$ ]]
+      then n_doc=false; n_line=""; return 9 # Special exit code 9 for document end
+      elif [[ "$n_line" =~ ^\.\.\. ]]
+      then echo "Error: Invalid document end marker." >&2; return 1
       else n_lines+=("$n_line"); fi;;
     '%') # Directive name must be [A-Z][A-Z0-9_]* and not directly followed by :
       if [[ "$n_doc" != true && "$n_line" =~ \
@@ -957,6 +970,7 @@ sysyaml_write_yaml_recurse() {
         if [[ "$l_indent" == true ]]; then echo -n '2'; fi # Indentation indicator
         if [[ "$l_val" == *$'\n\n' ]]; then echo -n '+' # Chomp indicator: keep all trailing lines
         elif [[ "$l_val" != *$'\n' ]]; then echo -n '-'; fi # Chomp indicator: trim trailing lines
+        if [[ "$l_indent" == true && -z "$l_indent_space" ]]; then l_indent_space='  '; fi
         l_indent_space="$(printf "%${l_next_indent}s" "$l_indent_space")"
         if [[ "${#l_lines[@]}" -gt 0 && -z "${l_lines[-1]}" ]]; then unset 'l_lines[-1]'; fi
         for l_i in "${l_lines[@]}"; do printf '\n%s%s' "$l_indent_space" "$l_i"; done
@@ -1175,6 +1189,14 @@ then
       --subkeys, -s                 clear subkeys for where to base root, default same as --root
       --subkeys-add=, -a <key>      add raw, space-separated (possibly double-quoted) subkey(s)
       --subkeys-encode=, -e <key>   encode (i.e., double-quote if needed) and add subkey(s)
+    
+    Examples:
+      Read YAML from stdin and write JSON to stdout
+        sys-yaml --parse --write-json
+        Or use: sys-yaml -pj
+      Read YAML from a file and write as environment variables to a file
+        sys-yaml --in=file.yml --parse --name=my_config --out=file.env --write-conf
+        Or use: sys-yaml -i file.yml -pn my_config -o file.env -f
     EOF
   }
   print_version() {
@@ -1182,7 +1204,7 @@ then
     sys-yaml 1.0.0-dev
     MIT License
 
-    Copyright (c) 2025 Erik Isaksson, https://github.com/erikis
+    Copyright (c) 2025-2026 Erik Isaksson, https://github.com/erikis
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to deal
@@ -1240,14 +1262,14 @@ then
       -f|-j|-y|--write-conf|--write-json|--write-yaml);;
       -s|--subkeys);;
       -a|-e|--subkeys-add|--subkeys-encode);;
-      \?) exit 1;; # getopts has already printed "illegal option"
+      \?) exit 2;; # getopts has already printed "illegal option"
       *)
         echo "Error: Invalid arguments. Unknown option." >&2
-        print_usage >&2; print_help >&2; exit 1;; esac; done
+        print_usage >&2; print_help >&2; exit 2;; esac; done
   if [[ "$OPTIND" -le "$#" ]]
   then
     echo "Error: Invalid arguments. Use options, -o value, and --option=value." >&2
-    print_usage >&2; print_help >&2; exit 1; fi
+    print_usage >&2; print_help >&2; exit 2; fi
   unset 'OPTIND' # Reset getopts
   
   # Intialize defaults
@@ -1262,6 +1284,7 @@ then
   decompress_cmd='-'
   # shellcheck disable=SC2034 # "not in use" but is actually used via namerefs
   in_lines=()
+  in_line=''
   in_doc=''
   # shellcheck disable=SC2034
   declare -a subkeys
@@ -1296,6 +1319,7 @@ then
         then exec 10<&0
         else exec 10<"$in_file"; fi
         in_lines=()
+        in_line=''
         # shellcheck disable=SC2034
         in_doc=''
         ;;
@@ -1332,8 +1356,9 @@ then
       -c|--clear) sysyaml_clear;;
       -R|--resolve) sysyaml_resolve 'subkeys';; # No "$name_key" as 2nd arg as it's confusing
       -p|--parse)
+        # Add possible first line already started on same line as directives end marker
+        if [[ -n "$in_line" ]]; then in_lines=("$in_line"); fi
         IFS='' # Otherwise line indentation won't be preserved
-        # shellcheck disable=SC2034
         while read -r in_line <&10
         do sysyaml_line 'in_lines' 'in_line' 'in_doc' ||
           if [[ "$?" -eq 9 ]]; then break; else exit 3; fi done # Use exit code 3 for YAML errors
@@ -1369,4 +1394,4 @@ then
     esac; done
   exec 10>&-
   exec 11>&-
-  sysyaml_valid && exit 0 || exit 2; fi # Use exit code 2 if YAML was invalid
+  sysyaml_valid && exit 0 || exit 4; fi # Use exit code 4 if YAML was invalid
