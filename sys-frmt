@@ -1,0 +1,201 @@
+#!/usr/bin/env node
+/*
+ * MIT License
+ *
+ * Copyright (c) 2026 Erik Isaksson, https://github.com/erikis
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+// Requires nodejs with the yaml library
+// In Debian/Ubuntu: apt install nodejs node-yaml
+
+// Libraries
+const YAML = require('yaml');
+
+// Built-in modules
+const fs = require('fs').promises;
+const { parseArgs } = require('util');
+const path = require('path');
+const crypto = require('crypto');
+
+function processYAML(content, out) {
+    // Parse all YAML documents in content
+    const docs = YAML.parseAllDocuments(content);
+
+    // Make necessary adjustments to scalars
+    const emptyPlaceholder = `#eMpTY_${crypto.randomUUID()}`;
+    docs.forEach((doc) =>
+        YAML.visit(doc, {
+            Scalar(key, node) {
+                if (key !== 'key') {
+                    // This node is a value (not a key)
+                    switch (node.type) {
+                        case 'PLAIN':
+                            // Don't allow plain scalars
+                            delete node.type;
+                            break;
+                        case 'BLOCK_FOLDED':
+                        case 'BLOCK_LITERAL':
+                            // Enforce indentation on empty lines in block scalars
+                            node['value'] = node['value'].replace(
+                                /(^(?=\n)|\n(?=\n))/g,
+                                `$&${emptyPlaceholder}`
+                            );
+                            break;
+                    }
+                } else if (node['value'] === null) {
+                    // Enforce double-quotes for empty keys
+                    node['value'] = emptyPlaceholder;
+                } else if (
+                    /^[\]?:,[{}#&*!|>\'%@\`.-]|["\\\x00-\x1F\x7F ]/.test(
+                        node['value']
+                    )
+                ) {
+                    // Enforce double-quotes for keys which:
+                    // - start with a YAML indicator char
+                    // - would be escaped in JSON
+                    // - contain space(s)
+                    node.type = 'QUOTE_DOUBLE';
+                } else {
+                    // Don't quote other keys
+                    delete node.type;
+                }
+            },
+        })
+    );
+
+    // Check whether any YAML document had errors
+    let hasErrors = false;
+    docs.forEach((doc) => {
+        if (doc.errors.length !== 0) {
+            hasErrors = true;
+            doc.errors.forEach((error) => {
+                process.stderr.write(`YAML error: ${error.message}\n`);
+            });
+        }
+    });
+
+    // If no errors, output all of the documents to out
+    if (!hasErrors) {
+        docs.forEach((doc) => {
+            out.write(
+                doc
+                    .toString({
+                        collectionStyle: 'block',
+                        defaultKeyType: 'PLAIN',
+                        defaultStringType: 'QUOTE_DOUBLE',
+                        doubleQuotedAsJSON: true,
+                        singleQuote: false,
+                    })
+                    .replaceAll(emptyPlaceholder, '')
+            );
+        });
+    }
+    return !hasErrors;
+}
+
+async function handleStdIn() {
+    const chunks = [];
+    try {
+        await new Promise((resolve, reject) => {
+            process.stdin.on('data', (chunk) => chunks.push(chunk));
+            process.stdin.on('end', resolve);
+            process.stdin.on('error', reject);
+        });
+    } catch (ex) {
+        process.stderr.write(`stdin: ${ex.message}\n`);
+        process.exit(1);
+    }
+    const content = Buffer.concat(chunks);
+    if (!processYAML(content.toString(), process.stdout)) {
+        process.exit(1);
+    }
+}
+
+async function handleFileNames(files) {
+    let isError = false;
+    for (const file of files) {
+        try {
+            // Read content from file
+            process.stderr.write(`Reading: ${file}\n`);
+            const content = await fs.readFile(file);
+
+            // Prepare output stream to a new file
+            const outFile = `${file.replace(/\.yml$/, '')}.sys.yml`;
+            process.stderr.write(`Writing: ${outFile}\n`);
+            const fd = await fs.open(outFile, 'wx');
+            const stream = fd.createWriteStream(null, { fd });
+
+            // Process YAML in content and output to new file
+            if (!processYAML(content.toString(), stream)) {
+                isError = true;
+            }
+            stream.end();
+            await fd.close();
+        } catch (ex) {
+            // If there is an error, notify user and continue with next file
+            isError = true;
+            process.stderr.write(`${file}: ${ex.message}\n`);
+        }
+    }
+    if (isError) {
+        process.exit(1);
+    }
+}
+
+async function main() {
+    // Parse arguments
+    let parsed;
+    try {
+        parsed = parseArgs({
+            strict: true,
+            allowPositionals: true,
+            options: {
+                help: { short: 'h', type: 'boolean' },
+            },
+        });
+    } catch (ex) {
+        process.stderr.write(`Error: ${ex.message}\n`);
+        process.exit(2);
+    }
+    const { values, positionals } = parsed;
+    const scriptName = path.basename(process.argv[1]) || 'sys-frmt';
+    if (values.help) {
+        process.stdout.write(
+            `Usage: ${scriptName} [OPTION]... [FILE]...\n` +
+                `Read YAML FILE(s) or stdin and write to Sys-YAML files or stdout.\n\n` +
+                `Options:\n` +
+                `  -h, --help     Show this help message and exit\n`
+        );
+        process.exit(0);
+    }
+
+    // If no positionals, handle stdin; otherwise, handle filenames
+    if (positionals.length === 0) {
+        await handleStdIn();
+    } else {
+        await handleFileNames(positionals);
+    }
+}
+
+main().catch((ex) => {
+    process.stderr.write(`Error: ${ex.message}\n`);
+    process.exit(1);
+});
