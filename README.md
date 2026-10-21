@@ -9,6 +9,7 @@ Limited [YAML](https://yaml.org/spec/1.2.2/) with [JSON](https://www.json.org/)-
 - **Support for block scalars, tags, anchors/aliases, and complex mappings**, essentially implementing all of YAML except for the above limitations.
 - **Function [library](sys-yaml)** for using the parser more conveniently as well as writing YAML and other formats. Also pure Bash, except jq integration for JSON formatting and improved long string encoding performance, as well as file import/export.
 - **Command-line interface** for parsing YAML files and writing values to files as environment variables, JSON, YAML, and other formats.
+- Separate Node.js-based [script](sys-frmt) for **converting valid YAML to limited YAML** compatible with Sys-YAML.
 
 ## Motivation
 
@@ -112,6 +113,8 @@ Bash 5, due to use of associative arrays and namerefs.
 
 `xxd` is required for `--binary` and for `--write-value` with a value tagged !!binary.
 
+The [sys-frmt](sys-frmt) script requires Node.js with the [yaml](https://github.com/eemeli/yaml) library.
+
 ### macOS
 
 Install `bash` from MacPorts or Homebrew, as the pre-installed Bash version is too old.
@@ -123,6 +126,8 @@ It is recommended to also install `jq`.
 Bash 5 is in Debian since version 10 (Buster) and in Ubuntu since 20.04 LTS (Focal Fossa).
 
 Recommended: `apt install jq xxd`
+
+For sys-frmt: `apt install nodejs node-yaml`
 
 ## Usage
 
