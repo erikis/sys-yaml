@@ -14,7 +14,7 @@
 # 'key' and 'val'. Tags are in 'tag'. Aliases are in 'alias', to be looked-up in yaml_anchors.
 # The function yaml_encode escapes values for JSON/YAML. For Bash strings, add 2nd arg. for $,
 # e.g.: value="${yaml_values["yaml key"]}"; echo -n 'key="'; yaml_encode 'value' '$'; echo '"'
-# Source: https://github.com/erikis/sys-yaml (MIT License); Copyright 2025 Erik Isaksson
+# Source: https://github.com/erikis/sys-yaml (MIT License); Copyright 2025-2026 Erik Isaksson
 yaml_root="${yaml_root:-"yaml"}" # Implicit key to the root (space-separated, default 'yaml')
 yaml_v="${yaml_v:-false}"       # Enable verbose output of values being added (default false)
 yaml_jq="${yaml_jq:-""}"   # Use jq for piping JSON (default 'jq' if found, false to disable)
@@ -109,13 +109,13 @@ do # Inserted ignored and impossible final line $'#\n' to ensure block/JSON end 
       if [[ "$yaml_value" =~  [+-]{1} ]]; then yaml_chomp="${BASH_REMATCH[0]}"; fi
       if [[ "$yaml_value" =~ [1-9]{1} ]]; then yaml_block="${BASH_REMATCH[0]}"; fi
       if [[ -z "$yaml_block" ]]; then yaml_block=true # If no indicator, detect indent
-      else yaml_block="$(("$yaml_indent"+"$yaml_block"))"; fi; fi # If indicator, add to indent
+      elif [[ "$yaml_indent" -ge 0 ]]; then yaml_block="$(("$yaml_indent"+"$yaml_block"))"; fi; fi
     if [[ "$yaml_block" == true && "$yaml_l" =~ ^(\ {$(("$yaml_indent"+1)),})([^ ].*) && \
       "$yaml_l" != $'#\n' ]]; then yaml_block="${#BASH_REMATCH[1]}"
       if [[ "${#yaml_var[@]}" -gt 0 ]]; then yaml_var+=("$yaml_style"); fi
       yaml_string="${BASH_REMATCH[2]}"; yaml_var+=("$yaml_string"); continue # Detected indent
-    elif [[ (("$yaml_block" != true && "$yaml_l" =~ ^(\ {$yaml_block})(.*)) || \
-      ("$yaml_block" == true && "$yaml_l" =~ ^(\ *)(.*))) && "$yaml_l" != $'#\n' ]]
+    elif [[ (("$yaml_block" != true && "$yaml_l" =~ ^(\ {$yaml_block})(.*)|^\ *$) || \
+      ("$yaml_block" == true && "$yaml_l" =~ ^\ *$)) && "$yaml_l" != $'#\n' ]]
     then # If still inside a block scalar
       yaml_string="${BASH_REMATCH[2]}"; if [[ "$yaml_block" == true ]]; then yaml_string=''; fi
       if [[ "$yaml_style" == ' ' && -z "$yaml_string" ]] # If folded and empty line,
